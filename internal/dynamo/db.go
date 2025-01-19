@@ -1,8 +1,7 @@
-package db
+package dynamo
 
 import (
 	"context"
-
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
@@ -13,7 +12,10 @@ type DynamoClient struct {
 }
 
 func NewDynamoClient(client *dynamodb.Client, tableName string) *DynamoClient {
-	return &DynamoClient{Client: client, TableName: tableName}
+	return &DynamoClient{
+		Client:    client,
+		TableName: tableName,
+	}
 }
 
 func (d *DynamoClient) StoreUser(userID, email string) error {

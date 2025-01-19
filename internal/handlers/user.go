@@ -4,38 +4,39 @@ import (
 	"context"
 	"github.com/Atlas-Mesh/user-management/config"
 	"github.com/Atlas-Mesh/user-management/internal/atproto"
-	"github.com/Atlas-Mesh/user-management/internal/db"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/Atlas-Mesh/user-management/internal/dynamo"
 	"log"
+
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 )
 
 type UserRequest struct {
-	Handle string `json:"handle"`
-	Email  string `json:"email"`
+	Handle string `json:"handle"` // Represents the AT Protocol handle
+	Email  string `json:"email"`  // User's email
 }
 
 func UserHandler(ctx context.Context, event UserRequest) (string, error) {
 	log.Println("Processing request...")
 
-	// Load Config
-	cfg, err := config.LoadConfig()
+	// Load Custom Config
+	cfg, awsCfg, err := config.LoadConfig()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		log.Fatalf("Failed to load configuration: %v", err)
 		return "Internal Server Error", err
 	}
 
-	// Initialize Clients
-	dynamoClient := db.NewDynamoClient(dynamodb.NewFromConfig(cfg.AwsConfig), cfg.DynamoTableName)
+	dynamoDBClient := dynamodb.NewFromConfig(awsCfg)
+
+	dynamoClient := dynamo.NewDynamoClient(dynamoDBClient, cfg.DynamoTableName)
+
 	atProtoClient := atproto.NewAtProtoClient(cfg.AtProtoBaseURL)
 
-	// Register user via AT Protocol
 	err = atProtoClient.RegisterUser(event.Handle, event.Email)
 	if err != nil {
 		log.Fatalf("Failed to register user: %v", err)
 		return "Failed to register user", err
 	}
 
-	// Store user in DynamoDB
 	err = dynamoClient.StoreUser(event.Handle, event.Email)
 	if err != nil {
 		log.Fatalf("Failed to store user: %v", err)
