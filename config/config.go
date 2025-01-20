@@ -18,7 +18,7 @@ func LoadConfig() (*Config, aws.Config, error) {
 	}
 
 	return &Config{
-		DynamoTableName: "YourDynamoDBTableName",
-		AtProtoBaseURL:  "https://example.com",
+		DynamoTableName: "Users",
+		AtProtoBaseURL:  "https://shareframe.life",
 	}, awsCfg, nil
 }

@@ -3,6 +3,7 @@ module github.com/Atlas-Mesh/user-management
 go 1.23.3
 
 require (
+	github.com/aws/aws-lambda-go v1.47.0
 	github.com/aws/aws-sdk-go-v2 v1.33.0
 	github.com/aws/aws-sdk-go-v2/config v1.29.1
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.39.5
