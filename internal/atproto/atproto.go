@@ -31,7 +31,6 @@ func (c *ATProtocolClient) RegisterUser(handle, email string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-
 		return fmt.Errorf("failed to create account: %s", resp.Status)
 	}
 	return nil

@@ -25,6 +25,14 @@ func UserHandler(ctx context.Context, event UserRequest) (events.APIGatewayProxy
 		return events.APIGatewayProxyResponse{}, err
 	}
 
+	adminCreds, err := config.RetrieveAdminCreds()
+	if err != nil {
+		log.Fatalf("Failed to retrieve admin creds: %v", err)
+		return events.APIGatewayProxyResponse{}, err
+	}
+
+	log.Printf("Admin credentials: %v", adminCreds)
+
 	dynamoDBClient := dynamodb.NewFromConfig(awsCfg)
 	dynamoClient := dynamo.NewDynamoClient(dynamoDBClient, cfg.DynamoTableName)
 	atProtoClient := ATProtocol.NewATProtocolClient(cfg.AtProtoBaseURL)
