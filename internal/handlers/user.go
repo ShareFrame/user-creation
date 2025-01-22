@@ -3,63 +3,81 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"github.com/Atlas-Mesh/user-management/config"
 	ATProtocol "github.com/Atlas-Mesh/user-management/internal/atproto"
-	"github.com/ShareFrame/user-management/config"
-	"github.com/ShareFrame/user-management/internal/dynamo"
-	"github.com/ShareFrame/user-management/internal/models"
+	"github.com/Atlas-Mesh/user-management/internal/dynamo"
+	"github.com/Atlas-Mesh/user-management/internal/models"
 	"github.com/aws/aws-lambda-go/events"
-	"log"
-
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"log"
 )
 
-func retrieveAdminCredentials() (AdminCreds, error) {
-	input, err := config.RetrieveAdminCreds()
+func retrieveAdminCredentials(ctx context.Context) (models.AdminCreds, error) {
+	input, err := config.RetrieveAdminCreds(ctx)
 	if err != nil {
-		log.Fatalf("Failed to retrieve admin creds: %v", err)
-		return AdminCreds{}, err
+		return models.AdminCreds{}, fmt.Errorf("failed to retrieve admin credentials: %w", err)
 	}
 
-	var adminCredentials AdminCreds
+	var adminCredentials models.AdminCreds
 	err = json.Unmarshal([]byte(input), &adminCredentials)
 	if err != nil {
-		log.Fatalf("Failed to unmarshal admin creds: %v", err)
+		return models.AdminCreds{}, fmt.Errorf("failed to unmarshal admin credentials: %w", err)
 	}
 
 	return adminCredentials, nil
 }
 
-func UserHandler(ctx context.Context, event UserRequest) (events.APIGatewayProxyResponse, error) {
-	log.Println("Processing request...")
+func UserHandler(ctx context.Context, event models.UserRequest) (events.APIGatewayProxyResponse, error) {
+	log.Printf("Processing create account request for user: %s", event.Handle)
 
-	cfg, awsCfg, err := config.LoadConfig()
-	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
-		return events.APIGatewayProxyResponse{}, err
+	if event.Handle == "" || event.Email == "" {
+		return events.APIGatewayProxyResponse{
+			StatusCode: 400,
+			Body:       "Invalid request: handle and email are required",
+		}, nil
 	}
 
-	adminCreds, err := retrieveAdminCredentials()
-	log.Printf("Admin credentials: %v", adminCreds)
+	cfg, awsCfg, err := config.LoadConfig(ctx)
+	if err != nil {
+		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	adminCreds, err := retrieveAdminCredentials(ctx)
+	if err != nil {
+		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to retrieve admin credentials: %w", err)
+	}
 
 	dynamoDBClient := dynamodb.NewFromConfig(awsCfg)
-	dynamoClient := dynamo.NewDynamoClient(dynamoDBClient, cfg.DynamoTableName)
+	dynamoClient, err := dynamo.NewDynamoClient(dynamoDBClient, cfg.DynamoTableName, "America/Chicago")
+	if err != nil {
+		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to create DynamoDB client: %w", err)
+	}
+
 	atProtoClient := ATProtocol.NewATProtocolClient(cfg.AtProtoBaseURL)
 
-	err = atProtoClient.RegisterUser(event.Handle, event.Email)
+	inviteCode, err := atProtoClient.CreateInviteCode(adminCreds)
 	if err != nil {
-		log.Fatalf("Failed to register user: %v", err)
-		return events.APIGatewayProxyResponse{}, err
+		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to create invite code: %w", err)
 	}
 
-	err = dynamoClient.StoreUser(event.Handle, event.Email)
+	event.Handle = fmt.Sprintf("%s.shareframe.social", event.Handle)
+	log.Printf("Registering user with handle: %s", event.Handle)
+
+	user, err := atProtoClient.RegisterUser(event.Handle, event.Email, inviteCode.Code)
 	if err != nil {
-		log.Fatalf("Failed to store user: %v", err)
-		return events.APIGatewayProxyResponse{}, err
+		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to register user: %w", err)
+	}
+	log.Printf("User registered successfully: %s", user.Handle)
+
+	err = dynamoClient.StoreUser(user)
+	if err != nil {
+		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to store user: %w", err)
 	}
 
-	log.Println("User processed successfully")
+	log.Printf("Account created successfully: %s", user.DID)
 	return events.APIGatewayProxyResponse{
-		StatusCode: 200,
+		StatusCode: 201,
 		Body:       "User registered successfully",
 	}, nil
 }
