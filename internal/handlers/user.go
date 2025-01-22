@@ -2,18 +2,31 @@ package handlers
 
 import (
 	"context"
-	"github.com/Atlas-Mesh/user-management/config"
+	"encoding/json"
 	ATProtocol "github.com/Atlas-Mesh/user-management/internal/atproto"
-	"github.com/Atlas-Mesh/user-management/internal/dynamo"
+	"github.com/ShareFrame/user-management/config"
+	"github.com/ShareFrame/user-management/internal/dynamo"
+	"github.com/ShareFrame/user-management/internal/models"
 	"github.com/aws/aws-lambda-go/events"
 	"log"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 )
 
-type UserRequest struct {
-	Handle string `json:"handle"`
-	Email  string `json:"email"`
+func retrieveAdminCredentials() (AdminCreds, error) {
+	input, err := config.RetrieveAdminCreds()
+	if err != nil {
+		log.Fatalf("Failed to retrieve admin creds: %v", err)
+		return AdminCreds{}, err
+	}
+
+	var adminCredentials AdminCreds
+	err = json.Unmarshal([]byte(input), &adminCredentials)
+	if err != nil {
+		log.Fatalf("Failed to unmarshal admin creds: %v", err)
+	}
+
+	return adminCredentials, nil
 }
 
 func UserHandler(ctx context.Context, event UserRequest) (events.APIGatewayProxyResponse, error) {
@@ -25,12 +38,7 @@ func UserHandler(ctx context.Context, event UserRequest) (events.APIGatewayProxy
 		return events.APIGatewayProxyResponse{}, err
 	}
 
-	adminCreds, err := config.RetrieveAdminCreds()
-	if err != nil {
-		log.Fatalf("Failed to retrieve admin creds: %v", err)
-		return events.APIGatewayProxyResponse{}, err
-	}
-
+	adminCreds, err := retrieveAdminCredentials()
 	log.Printf("Admin credentials: %v", adminCreds)
 
 	dynamoDBClient := dynamodb.NewFromConfig(awsCfg)

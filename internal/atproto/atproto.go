@@ -15,8 +15,10 @@ func NewATProtocolClient(baseURL string) *ATProtocolClient {
 	return &ATProtocolClient{BaseURL: baseURL}
 }
 
-func (c *ATProtocolClient) RegisterUser(handle, email string) error {
-	data := map[string]string{"handle": handle, "email": email}
+func (c *ATProtocolClient) CreateInviteCode()
+
+func (c *ATProtocolClient) RegisterUser(handle, email, inviteCode string) error {
+	data := map[string]string{"handle": handle, "email": email, "inviteCode": inviteCode}
 	body, _ := json.Marshal(data)
 
 	req, _ := http.NewRequest("POST", c.BaseURL+"/xrpc/com.atproto.server.createAccount",
