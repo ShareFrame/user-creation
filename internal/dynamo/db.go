@@ -17,22 +17,22 @@ const (
 )
 
 type DynamoClient struct {
-	Client    *dynamodb.Client
+	Client    DynamoDBAPI
 	TableName string
-	Location  *time.Location
+	TimeZone  string
 }
 
-func NewDynamoClient(client *dynamodb.Client, tableName, location string) (*DynamoClient, error) {
-	loc, err := time.LoadLocation(location)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load location: %w", err)
-	}
+type DynamoDBAPI interface {
+	PutItem(ctx context.Context, input *dynamodb.PutItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.
+		PutItemOutput, error)
+}
 
+func NewDynamoClient(client DynamoDBAPI, tableName string, timeZone string) *DynamoClient {
 	return &DynamoClient{
 		Client:    client,
 		TableName: tableName,
-		Location:  loc,
-	}, nil
+		TimeZone:  timeZone,
+	}
 }
 
 func (d *DynamoClient) StoreUser(user models.CreateUserResponse) error {
@@ -40,13 +40,18 @@ func (d *DynamoClient) StoreUser(user models.CreateUserResponse) error {
 		return fmt.Errorf("user DID and handle are required")
 	}
 
-	_, err := d.Client.PutItem(context.TODO(), &dynamodb.PutItemInput{
+	loc, err := time.LoadLocation(d.TimeZone)
+	if err != nil {
+		return fmt.Errorf("failed to load time zone: %w", err)
+	}
+
+	_, err = d.Client.PutItem(context.TODO(), &dynamodb.PutItemInput{
 		TableName: &d.TableName,
 		Item: map[string]types.AttributeValue{
 			"UserId":            &types.AttributeValueMemberS{Value: user.DID},
 			"Email":             &types.AttributeValueMemberS{Value: user.Email},
 			"Handle":            &types.AttributeValueMemberS{Value: user.Handle},
-			"Created":           &types.AttributeValueMemberS{Value: time.Now().In(d.Location).Format(time.RFC3339)},
+			"Created":           &types.AttributeValueMemberS{Value: time.Now().In(loc).Format(time.RFC3339)},
 			"Status":            &types.AttributeValueMemberS{Value: DefaultStatus},
 			"Verified":          &types.AttributeValueMemberBOOL{Value: DefaultVerified},
 			"Role":              &types.AttributeValueMemberS{Value: DefaultRole},

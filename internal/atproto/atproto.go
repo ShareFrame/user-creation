@@ -17,15 +17,19 @@ const (
 	timeout                  = 15 * time.Second
 )
 
-type ATProtocolClient struct {
-	BaseURL    string
-	HTTPClient *http.Client
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
 }
 
-func NewATProtocolClient(baseURL string) *ATProtocolClient {
+type ATProtocolClient struct {
+	BaseURL    string
+	HTTPClient HTTPClient
+}
+
+func NewATProtocolClient(baseURL string, client HTTPClient) *ATProtocolClient {
 	return &ATProtocolClient{
 		BaseURL:    baseURL,
-		HTTPClient: &http.Client{Timeout: timeout},
+		HTTPClient: client,
 	}
 }
 

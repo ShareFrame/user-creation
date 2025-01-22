@@ -15,6 +15,10 @@ type Config struct {
 	AtProtoBaseURL  string
 }
 
+type SecretsManagerAPI interface {
+	GetSecretValue(ctx context.Context, input *secretsmanager.GetSecretValueInput, opts ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error)
+}
+
 func LoadConfig(ctx context.Context) (*Config, aws.Config, error) {
 	awsCfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
@@ -38,7 +42,7 @@ func LoadConfig(ctx context.Context) (*Config, aws.Config, error) {
 	}, awsCfg, nil
 }
 
-func RetrieveAdminCreds(ctx context.Context) (string, error) {
+func RetrieveAdminCreds(ctx context.Context, svc SecretsManagerAPI) (string, error) {
 	secretName := os.Getenv("PDS_ADMIN_SECRET_NAME")
 	region := os.Getenv("AWS_REGION")
 
@@ -49,13 +53,6 @@ func RetrieveAdminCreds(ctx context.Context) (string, error) {
 	if region == "" {
 		region = "us-east-1"
 	}
-
-	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
-	if err != nil {
-		return "", fmt.Errorf("failed to load AWS config: %w", err)
-	}
-
-	svc := secretsmanager.NewFromConfig(cfg)
 
 	input := &secretsmanager.GetSecretValueInput{
 		SecretId:     aws.String(secretName),
