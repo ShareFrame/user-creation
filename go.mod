@@ -3,12 +3,12 @@ module github.com/ShareFrame/user-management
 go 1.23.5
 
 require (
-	github.com/ShareFrame/user-management v0.0.0-20250122234233-170cbddce5d1
 	github.com/aws/aws-lambda-go v1.47.0
 	github.com/aws/aws-sdk-go-v2 v1.33.0
 	github.com/aws/aws-sdk-go-v2/config v1.29.1
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.39.5
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.34.13
+	github.com/resend/resend-go/v2 v2.15.0
 	github.com/stretchr/testify v1.10.0
 )
 

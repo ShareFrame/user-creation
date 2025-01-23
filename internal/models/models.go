@@ -6,6 +6,10 @@ type AdminCreds struct {
 	PDSAdminUsername string `json:"PDS_ADMIN_USERNAME"`
 }
 
+type EmailCreds struct {
+	APIKey string `json:"RESEND_APIKEY"`
+}
+
 type UserRequest struct {
 	Handle string `json:"handle"`
 	Email  string `json:"email"`

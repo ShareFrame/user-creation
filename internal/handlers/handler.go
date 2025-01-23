@@ -13,6 +13,7 @@ import (
 	"github.com/ShareFrame/user-management/config"
 	ATProtocol "github.com/ShareFrame/user-management/internal/atproto"
 	"github.com/ShareFrame/user-management/internal/dynamo"
+	"github.com/ShareFrame/user-management/internal/email"
 	"github.com/ShareFrame/user-management/internal/models"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -121,6 +122,15 @@ func UserHandler(ctx context.Context, event models.UserRequest) (events.APIGatew
 	}
 
 	log.Printf("Account created successfully: %s", user.DID)
+
+	sendId, err := email.SendEmail(ctx, user.Email, secretsManagerClient)
+	if err != nil {
+		log.Printf("Failed to send email: %v", err)
+		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to send email: %w", err)
+	}
+
+	fmt.Printf("Email sent successfully: %s", sendId)
+
 	return events.APIGatewayProxyResponse{
 		StatusCode: 201,
 		Body:       "User registered successfully",
