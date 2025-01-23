@@ -3,10 +3,11 @@ package atproto
 import (
 	"bytes"
 	"errors"
-	"github.com/Atlas-Mesh/user-management/internal/models"
 	"io/ioutil"
 	"net/http"
 	"testing"
+
+	"github.com/ShareFrame/user-management/internal/models"
 )
 
 type MockHTTPClient struct {

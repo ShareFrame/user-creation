@@ -3,10 +3,11 @@ package dynamo
 import (
 	"context"
 	"fmt"
-	"github.com/Atlas-Mesh/user-management/internal/models"
+	"time"
+
+	"github.com/ShareFrame/user-management/internal/models"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"time"
 )
 
 const (

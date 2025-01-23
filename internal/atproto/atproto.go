@@ -5,9 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/Atlas-Mesh/user-management/internal/models"
 	"net/http"
 	"time"
+
+	"github.com/ShareFrame/user-management/internal/models"
 )
 
 const (
