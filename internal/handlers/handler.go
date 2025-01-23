@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/mail"
 	"os"
@@ -18,6 +17,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/sirupsen/logrus"
 )
 
 const defaultTimeZone = "America/Chicago"
@@ -26,21 +26,27 @@ func retrieveAdminCredentials(ctx context.Context,
 	secretsManagerClient config.SecretsManagerAPI) (models.AdminCreds, error) {
 	input, err := config.RetrieveSecret(ctx, os.Getenv("PDS_ADMIN_SECRET_NAME"), secretsManagerClient)
 	if err != nil {
+		logrus.WithError(err).Error("Failed to retrieve admin credentials")
 		return models.AdminCreds{}, fmt.Errorf("failed to retrieve admin credentials: %w", err)
 	}
 
 	var adminCredentials models.AdminCreds
 	err = json.Unmarshal([]byte(input), &adminCredentials)
 	if err != nil {
+		logrus.WithError(err).Error("Failed to unmarshal admin credentials")
 		return models.AdminCreds{}, fmt.Errorf("failed to unmarshal admin credentials: %w", err)
 	}
 
+	logrus.Info("Successfully retrieved admin credentials")
 	return adminCredentials, nil
 }
 
 func validateAndFormatUser(event models.UserRequest) (models.UserRequest, *events.APIGatewayProxyResponse, error) {
 	if event.Handle == "" || event.Email == "" {
-		log.Printf("Invalid request: missing handle or email. Handle: %q, Email: %q", event.Handle, event.Email)
+		logrus.WithFields(logrus.Fields{
+			"handle": event.Handle,
+			"email":  event.Email,
+		}).Warn("Invalid request: missing handle or email")
 		return models.UserRequest{}, &events.APIGatewayProxyResponse{
 			StatusCode: 400,
 			Body:       "Invalid request: handle and email are required",
@@ -49,28 +55,31 @@ func validateAndFormatUser(event models.UserRequest) (models.UserRequest, *event
 
 	if !strings.HasSuffix(event.Handle, ".shareframe.social") {
 		event.Handle = fmt.Sprintf("%s.shareframe.social", event.Handle)
-		log.Printf("Updated handle: %s", event.Handle)
+		logrus.WithField("updated_handle", event.Handle).Info("Updated handle to include domain")
 	}
 
 	_, err := mail.ParseAddress(event.Email)
 	if err != nil {
-		log.Printf("Invalid email format: %s", event.Email)
+		logrus.WithFields(logrus.Fields{
+			"email": event.Email,
+		}).Warn("Invalid email format")
 		return models.UserRequest{}, &events.APIGatewayProxyResponse{
 			StatusCode: 400,
 			Body:       "Invalid request: email address is not properly formatted",
 		}, nil
 	}
 
+	logrus.Info("User request validated successfully")
 	return event, nil, nil
 }
 
 func UserHandler(ctx context.Context, event models.UserRequest) (events.APIGatewayProxyResponse, error) {
-	log.Printf("Processing create account request for user: %s", event.Handle)
+	logrus.WithField("handle", event.Handle).Info("Processing create account request")
 
 	// Validate request input
 	updatedEvent, validationResponse, err := validateAndFormatUser(event)
 	if err != nil {
-		log.Printf("Validation error: %v", err)
+		logrus.WithError(err).Error("Validation error")
 		return *validationResponse, nil
 	}
 	event = updatedEvent
@@ -78,7 +87,7 @@ func UserHandler(ctx context.Context, event models.UserRequest) (events.APIGatew
 	// Load configuration
 	cfg, awsCfg, err := config.LoadConfig(ctx)
 	if err != nil {
-		log.Printf("Failed to load configuration: %v", err)
+		logrus.WithError(err).Error("Failed to load configuration")
 		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to load configuration: %w", err)
 	}
 
@@ -88,7 +97,7 @@ func UserHandler(ctx context.Context, event models.UserRequest) (events.APIGatew
 	// Retrieve admin credentials
 	adminCreds, err := retrieveAdminCredentials(ctx, secretsManagerClient)
 	if err != nil {
-		log.Printf("Failed to retrieve admin credentials: %v", err)
+		logrus.WithError(err).Error("Failed to retrieve admin credentials")
 		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to retrieve admin credentials: %w", err)
 	}
 
@@ -102,34 +111,35 @@ func UserHandler(ctx context.Context, event models.UserRequest) (events.APIGatew
 	// Create invite code
 	inviteCode, err := atProtoClient.CreateInviteCode(adminCreds)
 	if err != nil {
-		log.Printf("Failed to create invite code: %v", err)
+		logrus.WithError(err).Error("Failed to create invite code")
 		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to create invite code: %w", err)
 	}
 
 	// Register user
 	user, err := atProtoClient.RegisterUser(event.Handle, event.Email, inviteCode.Code)
 	if err != nil {
-		log.Printf("Failed to register user: %v", err)
+		logrus.WithError(err).Error("Failed to register user")
 		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to register user: %w", err)
 	}
-	log.Printf("User registered successfully: %s", user.Handle)
+	logrus.WithField("handle", user.Handle).Info("User registered successfully")
 
 	// Store user in DynamoDB
 	err = dynamoClient.StoreUser(user)
 	if err != nil {
-		log.Printf("Failed to store user in DynamoDB: %v", err)
+		logrus.WithError(err).Error("Failed to store user in DynamoDB")
 		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to store user: %w", err)
 	}
 
-	log.Printf("Account created successfully: %s", user.DID)
+	logrus.WithField("did", user.DID).Info("Account created successfully")
 
-	sendId, err := email.SendEmail(ctx, user.Email, secretsManagerClient)
+	// Send email
+	sendId, err := email.SendEmail(ctx, event.Email, secretsManagerClient)
 	if err != nil {
-		log.Printf("Failed to send email: %v", err)
+		logrus.WithError(err).Error("Failed to send email")
 		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to send email: %w", err)
 	}
 
-	fmt.Printf("Email sent successfully: %s", sendId)
+	logrus.WithField("send_id", sendId).Info("Email sent successfully")
 
 	return events.APIGatewayProxyResponse{
 		StatusCode: 201,
