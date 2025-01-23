@@ -4,6 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"net/http"
+	"net/mail"
+	"os"
+	"strings"
+
 	"github.com/Atlas-Mesh/user-management/config"
 	ATProtocol "github.com/Atlas-Mesh/user-management/internal/atproto"
 	"github.com/Atlas-Mesh/user-management/internal/dynamo"
@@ -11,17 +17,13 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
-	"log"
-	"net/http"
-	"net/mail"
-	"strings"
 )
 
 const defaultTimeZone = "America/Chicago"
 
 func retrieveAdminCredentials(ctx context.Context,
 	secretsManagerClient config.SecretsManagerAPI) (models.AdminCreds, error) {
-	input, err := config.RetrieveAdminCreds(ctx, secretsManagerClient)
+	input, err := config.RetrieveSecret(ctx, os.Getenv("PDS_ADMIN_SECRET_NAME"), secretsManagerClient)
 	if err != nil {
 		return models.AdminCreds{}, fmt.Errorf("failed to retrieve admin credentials: %w", err)
 	}

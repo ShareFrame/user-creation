@@ -3,11 +3,12 @@ package config
 import (
 	"context"
 	"errors"
+	"os"
+	"testing"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/stretchr/testify/mock"
-	"os"
-	"testing"
 )
 
 type mockSecretsManagerClient struct {
@@ -126,7 +127,7 @@ func TestRetrieveAdminCreds(t *testing.T) {
 			mockOutput:    nil,
 			mockError:     nil,
 			expectedCreds: "",
-			expectedError: "PDS_ADMIN_SECRET_NAME environment variable is required",
+			expectedError: "secret name is required",
 		},
 		{
 			name: "AWS Secrets Manager Error",
@@ -161,7 +162,7 @@ func TestRetrieveAdminCreds(t *testing.T) {
 				mockClient.On("GetSecretValue", ctx, mock.Anything).Return(tt.mockOutput, tt.mockError)
 			}
 
-			creds, err := RetrieveAdminCreds(ctx, mockClient)
+			creds, err := RetrieveSecret(ctx, tt.envVars["PDS_ADMIN_SECRET_NAME"], mockClient)
 
 			if tt.expectedError != "" {
 				if err == nil {
