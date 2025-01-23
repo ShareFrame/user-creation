@@ -115,6 +115,15 @@ func UserHandler(ctx context.Context, event models.UserRequest) (events.APIGatew
 		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to create invite code: %w", err)
 	}
 
+	// Send email
+	sendId, err := email.SendEmail(ctx, event.Email, secretsManagerClient)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to send email")
+		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to send email: %w", err)
+	}
+
+	logrus.WithField("send_id", sendId).Info("Email sent successfully")
+
 	// Register user
 	user, err := atProtoClient.RegisterUser(event.Handle, event.Email, inviteCode.Code)
 	if err != nil {
@@ -131,15 +140,6 @@ func UserHandler(ctx context.Context, event models.UserRequest) (events.APIGatew
 	}
 
 	logrus.WithField("did", user.DID).Info("Account created successfully")
-
-	// Send email
-	sendId, err := email.SendEmail(ctx, event.Email, secretsManagerClient)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to send email")
-		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to send email: %w", err)
-	}
-
-	logrus.WithField("send_id", sendId).Info("Email sent successfully")
 
 	return events.APIGatewayProxyResponse{
 		StatusCode: 201,
