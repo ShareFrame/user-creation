@@ -3,6 +3,7 @@ package email
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/ShareFrame/user-management/internal/models"
@@ -76,19 +77,13 @@ func TestSendEmail(t *testing.T) {
 			mockClient.ExpectedCalls = nil
 
 			if tt.recipient != "" {
-				params := &resend.SendEmailRequest{
-					From:    "Admin <admin@shareframe.social>",
-					To:      []string{tt.recipient},
-					Html:    "<strong>hello world</strong>",
-					Subject: "Welcome to ShareFrame",
-					ReplyTo: "replyto@example.com",
-				}
-
-				response := tt.mockResponse
-				if response == nil {
-					response = (*resend.SendEmailResponse)(nil)
-				}
-				mockClient.On("Send", params).Return(response, tt.mockError)
+				mockClient.On("Send", mock.MatchedBy(func(req *resend.SendEmailRequest) bool {
+					return req.From == "Admin <admin@shareframe.social>" &&
+						req.To[0] == tt.recipient &&
+						req.Subject == "Welcome to ShareFrame" &&
+						req.ReplyTo == "replyto@example.com" &&
+						strings.Contains(req.Html, "<h1>Welcome to ShareFrame!</h1>") // Check for part of the HTML
+				})).Return(tt.mockResponse, tt.mockError)
 			}
 
 			id, err := SendEmail(ctx, tt.recipient, mockClient)

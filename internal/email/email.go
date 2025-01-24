@@ -2,16 +2,21 @@ package email
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/ShareFrame/user-management/config"
 	"github.com/ShareFrame/user-management/internal/models"
 	"github.com/resend/resend-go/v2"
 	"github.com/sirupsen/logrus"
 )
+
+//go:embed email_template.html
+var emailTemplate string
 
 type EmailClient interface {
 	Send(params *resend.SendEmailRequest) (*resend.SendEmailResponse, error)
@@ -39,10 +44,13 @@ func SendEmail(ctx context.Context, recipient string, client EmailClient) (strin
 		return "", errors.New("recipient email address is required")
 	}
 
+	validationLink := "https://shareframe.social/verify?token=abc123"
+	emailBody := strings.Replace(emailTemplate, "[VALIDATION_LINK]", validationLink, -1)
+
 	params := &resend.SendEmailRequest{
 		From:    "Admin <admin@shareframe.social>",
 		To:      []string{recipient},
-		Html:    "<strong>hello world</strong>",
+		Html:    emailBody,
 		Subject: "Welcome to ShareFrame",
 		ReplyTo: "replyto@example.com",
 	}
