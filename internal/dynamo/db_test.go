@@ -3,10 +3,11 @@ package dynamo
 import (
 	"context"
 	"errors"
-	"github.com/Atlas-Mesh/user-management/internal/models"
+	"testing"
+
+	"github.com/ShareFrame/user-management/internal/models"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/stretchr/testify/mock"
-	"testing"
 )
 
 type MockDynamoDBClient struct {

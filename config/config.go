@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
-	"os"
 )
 
 type Config struct {
@@ -42,12 +43,11 @@ func LoadConfig(ctx context.Context) (*Config, aws.Config, error) {
 	}, awsCfg, nil
 }
 
-func RetrieveAdminCreds(ctx context.Context, svc SecretsManagerAPI) (string, error) {
-	secretName := os.Getenv("PDS_ADMIN_SECRET_NAME")
+func RetrieveSecret(ctx context.Context, secretName string, svc SecretsManagerAPI) (string, error) {
 	region := os.Getenv("AWS_REGION")
 
 	if secretName == "" {
-		return "", errors.New("PDS_ADMIN_SECRET_NAME environment variable is required")
+		return "", errors.New("secret name is required")
 	}
 
 	if region == "" {
