@@ -76,7 +76,6 @@ func validateAndFormatUser(event models.UserRequest) (models.UserRequest, *event
 func UserHandler(ctx context.Context, event models.UserRequest) (events.APIGatewayProxyResponse, error) {
 	logrus.WithField("handle", event.Handle).Info("Processing create account request")
 
-	// Validate request input
 	updatedEvent, validationResponse, err := validateAndFormatUser(event)
 	if err != nil {
 		logrus.WithError(err).Error("Validation error")
@@ -84,53 +83,51 @@ func UserHandler(ctx context.Context, event models.UserRequest) (events.APIGatew
 	}
 	event = updatedEvent
 
-	// Load configuration
 	cfg, awsCfg, err := config.LoadConfig(ctx)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to load configuration")
 		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	// Initialize Secrets Manager client
 	secretsManagerClient := secretsmanager.NewFromConfig(awsCfg)
 
-	// Retrieve admin credentials
 	adminCreds, err := retrieveAdminCredentials(ctx, secretsManagerClient)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to retrieve admin credentials")
 		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to retrieve admin credentials: %w", err)
 	}
 
-	// Initialize DynamoDB client
 	dynamoDBClient := dynamodb.NewFromConfig(awsCfg)
 	dynamoClient := dynamo.NewDynamoClient(dynamoDBClient, cfg.DynamoTableName, defaultTimeZone)
 
-	// Initialize ATProtocol client
 	atProtoClient := ATProtocol.NewATProtocolClient(cfg.AtProtoBaseURL, &http.Client{})
 
-	// Create invite code
 	inviteCode, err := atProtoClient.CreateInviteCode(adminCreds)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to create invite code")
 		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to create invite code: %w", err)
 	}
 
-	// Send email
-	sendId, err := email.SendEmail(ctx, event.Email, secretsManagerClient)
+	emailCreds, err := email.GetEmailCreds(ctx, secretsManagerClient, os.Getenv("EMAIL_SERVICE_KEY"))
+	if err != nil {
+		logrus.WithError(err).Error("Failed to get email credentials")
+		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to get email credentials: %w", err)
+	}
+
+	user, err := atProtoClient.RegisterUser(event.Handle, event.Email, inviteCode.Code)
+	if err != nil {
+		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to register user: %w", err)
+	}
+	logrus.WithField("handle", user.Handle).Info("User registered successfully")
+
+	emailClient := email.NewResendEmailClient(emailCreds.APIKey)
+
+	sendId, err := email.SendEmail(ctx, event.Email, emailClient)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to send email")
 		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to send email: %w", err)
 	}
-
 	logrus.WithField("send_id", sendId).Info("Email sent successfully")
-
-	// Register user
-	user, err := atProtoClient.RegisterUser(event.Handle, event.Email, inviteCode.Code)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to register user")
-		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to register user: %w", err)
-	}
-	logrus.WithField("handle", user.Handle).Info("User registered successfully")
 
 	// Store user in DynamoDB
 	err = dynamoClient.StoreUser(user)

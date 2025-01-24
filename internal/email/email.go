@@ -3,6 +3,7 @@ package email
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
@@ -12,20 +13,31 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func SendEmail(ctx context.Context, recipient string, svc config.SecretsManagerAPI) (string, error) {
-	emailCredsStr, err := config.RetrieveSecret(ctx, os.Getenv("EMAIL_SERVICE_KEY"), svc)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to retrieve email service credentials")
-		return "", fmt.Errorf("failed to retrieve email service credentials: %w", err)
-	}
+type EmailClient interface {
+	Send(params *resend.SendEmailRequest) (*resend.SendEmailResponse, error)
+}
 
-	var emailCreds models.EmailCreds
-	if err := json.Unmarshal([]byte(emailCredsStr), &emailCreds); err != nil {
-		logrus.WithError(err).Error("Failed to unmarshal email credentials")
-		return "", fmt.Errorf("failed to unmarshal email credentials: %w", err)
-	}
+type ResendEmailClient struct {
+	client *resend.Client
+}
 
-	client := resend.NewClient(emailCreds.APIKey)
+func NewResendEmailClient(apiKey string) *ResendEmailClient {
+	if apiKey == "" {
+		logrus.Fatal("API key for ResendEmailClient is missing")
+	}
+	return &ResendEmailClient{
+		client: resend.NewClient(apiKey),
+	}
+}
+
+func (c *ResendEmailClient) Send(params *resend.SendEmailRequest) (*resend.SendEmailResponse, error) {
+	return c.client.Emails.Send(params)
+}
+
+func SendEmail(ctx context.Context, recipient string, client EmailClient) (string, error) {
+	if recipient == "" {
+		return "", errors.New("recipient email address is required")
+	}
 
 	params := &resend.SendEmailRequest{
 		From:    "Admin <admin@shareframe.social>",
@@ -35,13 +47,45 @@ func SendEmail(ctx context.Context, recipient string, svc config.SecretsManagerA
 		ReplyTo: "replyto@example.com",
 	}
 
-	sent, err := client.Emails.Send(params)
+	response, err := client.Send(params)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to send email")
-		return "", fmt.Errorf("failed to send email: %w", err)
+		logrus.WithError(err).WithField("recipient", recipient).Error("Failed to send email")
+		return "", fmt.Errorf("failed to send email to %s: %w", recipient, err)
 	}
 
-	logrus.WithField("email_id", sent.Id).Info("Email sent successfully")
+	logrus.WithFields(logrus.Fields{
+		"email_id":  response.Id,
+		"recipient": recipient,
+	}).Info("Email sent successfully")
+	return response.Id, nil
+}
 
-	return sent.Id, nil
+func GetEmailCreds(ctx context.Context, svc config.SecretsManagerAPI, secretKey string) (models.EmailCreds, error) {
+	if secretKey == "" {
+		return models.EmailCreds{}, errors.New("email service secret key is required")
+	}
+
+	secretValue, err := config.RetrieveSecret(ctx, secretKey, svc)
+	if err != nil {
+		logrus.WithError(err).WithField("secret_key", secretKey).Error("Failed to retrieve email service credentials")
+		return models.EmailCreds{}, fmt.Errorf("failed to retrieve email service credentials: %w", err)
+	}
+
+	var emailCreds models.EmailCreds
+	if err := json.Unmarshal([]byte(secretValue), &emailCreds); err != nil {
+		logrus.WithError(err).Error("Failed to unmarshal email credentials")
+		return models.EmailCreds{}, fmt.Errorf("failed to unmarshal email credentials: %w", err)
+	}
+
+	return emailCreds, nil
+}
+
+func ValidateEnvironment() error {
+	requiredEnvVars := []string{"EMAIL_SERVICE_KEY"}
+	for _, envVar := range requiredEnvVars {
+		if os.Getenv(envVar) == "" {
+			return fmt.Errorf("environment variable %s is not set", envVar)
+		}
+	}
+	return nil
 }
