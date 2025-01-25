@@ -7,12 +7,12 @@ import (
 	"net/http"
 	"net/mail"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/ShareFrame/user-management/config"
 	ATProtocol "github.com/ShareFrame/user-management/internal/atproto"
 	"github.com/ShareFrame/user-management/internal/dynamo"
-	"github.com/ShareFrame/user-management/internal/email"
 	"github.com/ShareFrame/user-management/internal/models"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -22,35 +22,31 @@ import (
 
 const defaultTimeZone = "America/Chicago"
 
-func retrieveAdminCredentials(ctx context.Context,
-	secretsManagerClient config.SecretsManagerAPI) (models.AdminCreds, error) {
+func retrieveAdminCredentials(ctx context.Context, secretsManagerClient config.SecretsManagerAPI) (models.AdminCreds, error) {
 	input, err := config.RetrieveSecret(ctx, os.Getenv("PDS_ADMIN_SECRET_NAME"), secretsManagerClient)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to retrieve admin credentials")
-		return models.AdminCreds{}, fmt.Errorf("failed to retrieve admin credentials: %w", err)
+		logrus.WithError(err).WithField("secret_name", os.Getenv("PDS_ADMIN_SECRET_NAME")).Error("Unable to retrieve admin credentials from Secrets Manager")
+		return models.AdminCreds{}, fmt.Errorf("could not retrieve admin credentials from Secrets Manager: %w", err)
 	}
 
 	var adminCredentials models.AdminCreds
 	err = json.Unmarshal([]byte(input), &adminCredentials)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to unmarshal admin credentials")
-		return models.AdminCreds{}, fmt.Errorf("failed to unmarshal admin credentials: %w", err)
+		logrus.WithError(err).WithField("secret_content", input).Error("Failed to unmarshal admin credentials")
+		return models.AdminCreds{}, fmt.Errorf("invalid admin credentials format in secret: %w", err)
 	}
 
 	logrus.Info("Successfully retrieved admin credentials")
 	return adminCredentials, nil
 }
 
-func validateAndFormatUser(event models.UserRequest) (models.UserRequest, *events.APIGatewayProxyResponse, error) {
+func validateAndFormatUser(event models.UserRequest) (models.UserRequest, error) {
 	if event.Handle == "" || event.Email == "" {
 		logrus.WithFields(logrus.Fields{
 			"handle": event.Handle,
 			"email":  event.Email,
-		}).Warn("Invalid request: missing handle or email")
-		return models.UserRequest{}, &events.APIGatewayProxyResponse{
-			StatusCode: 400,
-			Body:       "Invalid request: handle and email are required",
-		}, nil
+		}).Warn("Validation failed: handle or email is missing")
+		return models.UserRequest{}, fmt.Errorf("handle and email are required fields")
 	}
 
 	if !strings.HasSuffix(event.Handle, ".shareframe.social") {
@@ -58,88 +54,107 @@ func validateAndFormatUser(event models.UserRequest) (models.UserRequest, *event
 		logrus.WithField("updated_handle", event.Handle).Info("Updated handle to include domain")
 	}
 
+	regex := regexp.MustCompile(`^[a-zA-Z0-9]+$`)
+	baseHandle := strings.TrimSuffix(event.Handle, ".shareframe.social") // Get base handle
+	if !regex.MatchString(baseHandle) {
+		logrus.WithField("handle", baseHandle).Warn("Validation failed: handle contains invalid characters")
+		return models.UserRequest{}, fmt.Errorf("handle must not contain symbols and can only include letters and numbers")
+	}
+
 	_, err := mail.ParseAddress(event.Email)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{
 			"email": event.Email,
-		}).Warn("Invalid email format")
-		return models.UserRequest{}, &events.APIGatewayProxyResponse{
-			StatusCode: 400,
-			Body:       "Invalid request: email address is not properly formatted",
-		}, nil
+		}).Warn("Validation failed: invalid email format")
+		return models.UserRequest{}, fmt.Errorf("invalid email format")
 	}
 
 	logrus.Info("User request validated successfully")
-	return event, nil, nil
+	return event, nil
 }
 
 func UserHandler(ctx context.Context, event models.UserRequest) (events.APIGatewayProxyResponse, error) {
 	logrus.WithField("handle", event.Handle).Info("Processing create account request")
 
-	updatedEvent, validationResponse, err := validateAndFormatUser(event)
+	updatedEvent, err := validateAndFormatUser(event)
 	if err != nil {
-		logrus.WithError(err).Error("Validation error")
-		return *validationResponse, nil
+		logrus.WithError(err).Warn("Validation error")
+		return events.APIGatewayProxyResponse{
+			StatusCode: 400,
+			Body:       fmt.Sprintf(`{"error": %q}`, err.Error()),
+		}, nil
 	}
 	event = updatedEvent
 
 	cfg, awsCfg, err := config.LoadConfig(ctx)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to load configuration")
-		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to load configuration: %w", err)
+		logrus.WithError(err).Error("Failed to load application configuration")
+		return events.APIGatewayProxyResponse{
+			StatusCode: 500,
+			Body:       `{"error":"Could not load application configuration"}`,
+		}, nil
 	}
 
 	secretsManagerClient := secretsmanager.NewFromConfig(awsCfg)
-
 	adminCreds, err := retrieveAdminCredentials(ctx, secretsManagerClient)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to retrieve admin credentials")
-		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to retrieve admin credentials: %w", err)
+		logrus.WithError(err).Error("Failed to retrieve admin credentials from Secrets Manager")
+		return events.APIGatewayProxyResponse{
+			StatusCode: 500,
+			Body:       `{"error":"Could not retrieve admin credentials"}`,
+		}, nil
 	}
-
-	dynamoDBClient := dynamodb.NewFromConfig(awsCfg)
-	dynamoClient := dynamo.NewDynamoClient(dynamoDBClient, cfg.DynamoTableName, defaultTimeZone)
 
 	atProtoClient := ATProtocol.NewATProtocolClient(cfg.AtProtoBaseURL, &http.Client{})
-
 	inviteCode, err := atProtoClient.CreateInviteCode(adminCreds)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to create invite code")
-		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to create invite code: %w", err)
-	}
-
-	emailCreds, err := email.GetEmailCreds(ctx, secretsManagerClient, os.Getenv("EMAIL_SERVICE_KEY"))
-	if err != nil {
-		logrus.WithError(err).Error("Failed to get email credentials")
-		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to get email credentials: %w", err)
+		logrus.WithError(err).Error("Failed to generate invite code using AT Protocol")
+		return events.APIGatewayProxyResponse{
+			StatusCode: 500,
+			Body:       `{"error":"Could not generate invite code"}`,
+		}, nil
 	}
 
 	user, err := atProtoClient.RegisterUser(event.Handle, event.Email, inviteCode.Code)
 	if err != nil {
-		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to register user: %w", err)
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"handle": event.Handle,
+			"email":  event.Email,
+		}).Error("Failed to register user via AT Protocol")
+		return events.APIGatewayProxyResponse{
+			StatusCode: 500,
+			Body:       `{"error":"User registration failed"}`,
+		}, nil
 	}
-	logrus.WithField("handle", user.Handle).Info("User registered successfully")
 
-	emailClient := email.NewResendEmailClient(emailCreds.APIKey)
-
-	sendId, err := email.SendEmail(ctx, event.Email, emailClient)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to send email")
-		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to send email: %w", err)
-	}
-	logrus.WithField("send_id", sendId).Info("Email sent successfully")
-
-	// Store user in DynamoDB
+	dynamoDBClient := dynamodb.NewFromConfig(awsCfg)
+	dynamoClient := dynamo.NewDynamoClient(dynamoDBClient, cfg.DynamoTableName, defaultTimeZone)
 	err = dynamoClient.StoreUser(user)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to store user in DynamoDB")
-		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to store user: %w", err)
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"user_id": user.DID,
+			"handle":  user.Handle,
+		}).Error("Failed to store user in DynamoDB")
+		return events.APIGatewayProxyResponse{
+			StatusCode: 500,
+			Body:       `{"error":"Failed to store user data"}`,
+		}, nil
 	}
 
-	logrus.WithField("did", user.DID).Info("Account created successfully")
+	responseBody, err := json.Marshal(user)
+	if err != nil {
+		logrus.WithError(err).WithField("user_id", user.DID).Error("Failed to serialize user response")
+		return events.APIGatewayProxyResponse{
+			StatusCode: 500,
+			Body:       `{"error":"Internal Server Error"}`,
+		}, nil
+	}
 
 	return events.APIGatewayProxyResponse{
 		StatusCode: 201,
-		Body:       "User registered successfully",
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+		},
+		Body: string(responseBody),
 	}, nil
 }
