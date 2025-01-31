@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 )
 
 const (
+	CreateSessionEndpoint    = "/xrpc/com.atproto.server.createSession"
+	GetProfileEndpoint       = "/xrpc/app.bsky.actor.getProfile?actor=%s"
 	CreateInviteCodeEndpoint = "/xrpc/com.atproto.server.createInviteCode"
 	RegisterUserEndpoint     = "/xrpc/com.atproto.server.createAccount"
 	useCount                 = 1
@@ -33,6 +36,55 @@ func NewATProtocolClient(baseURL string, client HTTPClient) *ATProtocolClient {
 		BaseURL:    baseURL,
 		HTTPClient: client,
 	}
+}
+
+func (c *ATProtocolClient) CreateSession(identifier, password string) (*models.SessionResponse, error) {
+	logrus.WithField("identifier", identifier).Info("Attempting to create session")
+
+	payload := models.SessionRequest{
+		Identifier: identifier,
+		Password:   password,
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to marshal session request payload")
+		return nil, fmt.Errorf("failed to marshal session request: %w", err)
+	}
+
+	headers := map[string]string{
+		"Content-Type": "application/json",
+	}
+
+	resp, err := c.doPost(CreateSessionEndpoint, data, headers)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to execute session creation request")
+		return nil, fmt.Errorf("failed to create session request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		logrus.WithFields(logrus.Fields{
+			"status_code": resp.StatusCode,
+			"url":         CreateSessionEndpoint,
+		}).Error("Session creation failed")
+		return nil, fmt.Errorf("failed to create session, status code: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to read session response body")
+		return nil, fmt.Errorf("failed to read session response: %w", err)
+	}
+
+	var session models.SessionResponse
+	if err := json.Unmarshal(body, &session); err != nil {
+		logrus.WithError(err).Error("Failed to unmarshal session response")
+		return nil, fmt.Errorf("failed to parse session response: %w", err)
+	}
+
+	logrus.WithField("identifier", identifier).Info("Session created successfully")
+	return &session, nil
 }
 
 func (c *ATProtocolClient) CreateInviteCode(adminCreds models.AdminCreds) (*models.InviteCodeResponse, error) {
@@ -77,6 +129,43 @@ func (c *ATProtocolClient) CreateInviteCode(adminCreds models.AdminCreds) (*mode
 	logrus.WithField("invite_code", inviteCodeResp.Code).Info("Successfully created invite code")
 
 	return &inviteCodeResp, nil
+}
+
+func (c *ATProtocolClient) CheckUserExists(handle, token string) (bool, error) {
+	url := fmt.Sprintf(GetProfileEndpoint, handle)
+	logrus.WithField("handle", handle).Info("Checking if user exists on PDS")
+
+	req, err := http.NewRequest("GET", c.BaseURL+url, nil)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to create request for checking user existence")
+		return false, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to check if user exists")
+		return false, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		logrus.WithField("handle", handle).Info("User exists on PDS")
+		return true, nil
+	}
+
+	// Their api actually returns Bad Request if the user doesn't exist... disgusting
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest {
+		logrus.WithField("handle", handle).Info("User does not exist on PDS")
+		return false, nil
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"handle":      handle,
+		"status_code": resp.StatusCode,
+	}).Error("Unexpected response when checking user existence")
+	return false, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 }
 
 func (c *ATProtocolClient) RegisterUser(handle, email, inviteCode string) (models.CreateUserResponse, error) {
