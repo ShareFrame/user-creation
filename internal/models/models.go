@@ -43,3 +43,7 @@ type SessionResponse struct {
 	Did       string `json:"did"`
 	Handle    string `json:"handle"`
 }
+
+type BlockedUsernames struct {
+	Generic []string `json:"generic"`
+}
