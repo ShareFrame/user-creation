@@ -155,7 +155,8 @@ func (c *ATProtocolClient) CheckUserExists(handle, token string) (bool, error) {
 		return true, nil
 	}
 
-	if resp.StatusCode == http.StatusNotFound {
+	// Their api actually returns Bad Request if the user doesn't exist... disgusting
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest {
 		logrus.WithField("handle", handle).Info("User does not exist on PDS")
 		return false, nil
 	}
