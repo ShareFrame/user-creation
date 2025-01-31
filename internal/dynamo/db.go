@@ -36,7 +36,7 @@ func NewDynamoClient(client DynamoDBAPI, tableName string, timeZone string) *Dyn
 	}
 }
 
-func (d *DynamoClient) StoreUser(user models.CreateUserResponse) error {
+func (d *DynamoClient) StoreUser(user models.CreateUserResponse, event models.UserRequest) error {
 	if user.DID == "" || user.Handle == "" {
 		logrus.Warnf("User DID or Handle is missing: %+v", user)
 		return fmt.Errorf("user DID and handle are required")
@@ -53,7 +53,7 @@ func (d *DynamoClient) StoreUser(user models.CreateUserResponse) error {
 
 	item := map[string]types.AttributeValue{
 		"UserId":            &types.AttributeValueMemberS{Value: user.DID},
-		"Email":             &types.AttributeValueMemberS{Value: user.Email},
+		"Email":             &types.AttributeValueMemberS{Value: event.Email},
 		"Handle":            &types.AttributeValueMemberS{Value: user.Handle},
 		"Created":           &types.AttributeValueMemberS{Value: time.Now().In(loc).Format(time.RFC3339)},
 		"Status":            &types.AttributeValueMemberS{Value: DefaultStatus},
@@ -70,20 +70,20 @@ func (d *DynamoClient) StoreUser(user models.CreateUserResponse) error {
 
 	if err != nil {
 		logrus.WithFields(logrus.Fields{
-			"user_id":  user.DID,
-			"email":    user.Email,
-			"handle":   user.Handle,
-			"item":     item,
+			"user_id": user.DID,
+			"email":   user.Email,
+			"handle":  user.Handle,
+			"item":    item,
 		}).Error("Failed to store user in DynamoDB")
 		return fmt.Errorf("failed to store user in DynamoDB: %w", err)
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"user_id":  user.DID,
-		"email":    user.Email,
-		"handle":   user.Handle,
-		"status":   DefaultStatus,
-		"role":     DefaultRole,
+		"user_id": user.DID,
+		"email":   user.Email,
+		"handle":  user.Handle,
+		"status":  DefaultStatus,
+		"role":    DefaultRole,
 	}).Info("User successfully stored in DynamoDB")
 
 	return nil

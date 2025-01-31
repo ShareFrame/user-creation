@@ -91,7 +91,7 @@ func UserHandler(ctx context.Context, event models.UserRequest) (*models.CreateU
 
 	dynamoDBClient := dynamodb.NewFromConfig(awsCfg)
 	dynamoClient := dynamo.NewDynamoClient(dynamoDBClient, cfg.DynamoTableName, defaultTimeZone)
-	err = dynamoClient.StoreUser(user)
+	err = dynamoClient.StoreUser(user, updatedEvent)
 	if err != nil {
 		logrus.WithError(err).WithFields(logrus.Fields{
 			"user_id": user.DID,

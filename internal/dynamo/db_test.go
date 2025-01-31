@@ -24,6 +24,7 @@ func TestStoreUser(t *testing.T) {
 	tests := []struct {
 		name          string
 		user          models.CreateUserResponse
+		event         models.UserRequest
 		mockOutput    *dynamodb.PutItemOutput
 		mockError     error
 		expectedError string
@@ -36,6 +37,10 @@ func TestStoreUser(t *testing.T) {
 				DID:    "did:example:123",
 				Email:  "user@example.com",
 				Handle: "user123",
+			},
+			event: models.UserRequest{
+				Handle: "user123",
+				Email:  "user@example.com",
 			},
 			mockOutput:    &dynamodb.PutItemOutput{},
 			mockError:     nil,
@@ -63,6 +68,10 @@ func TestStoreUser(t *testing.T) {
 				Email:  "user@example.com",
 				Handle: "user123",
 			},
+			event: models.UserRequest{
+				Handle: "user123",
+				Email:  "user@example.com",
+			},
 			mockOutput:    nil,
 			mockError:     nil,
 			expectedError: "failed to load time zone: unknown time zone Foo/Bar",
@@ -75,6 +84,10 @@ func TestStoreUser(t *testing.T) {
 				DID:    "did:example:123",
 				Email:  "user@example.com",
 				Handle: "user123",
+			},
+			event: models.UserRequest{
+				Handle: "user123",
+				Email:  "user@example.com",
 			},
 			mockOutput:    nil,
 			mockError:     errors.New("DynamoDB error"),
@@ -97,7 +110,7 @@ func TestStoreUser(t *testing.T) {
 
 			client := NewDynamoClient(mockClient, "UsersTable", tt.timeZone)
 
-			err := client.StoreUser(tt.user)
+			err := client.StoreUser(tt.user, tt.event)
 
 			if tt.expectedError != "" {
 				if err == nil {
