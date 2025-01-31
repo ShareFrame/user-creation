@@ -14,7 +14,6 @@ import (
 	ATProtocol "github.com/ShareFrame/user-management/internal/atproto"
 	"github.com/ShareFrame/user-management/internal/dynamo"
 	"github.com/ShareFrame/user-management/internal/models"
-	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/sirupsen/logrus"
@@ -38,6 +37,29 @@ func retrieveAdminCredentials(ctx context.Context, secretsManagerClient config.S
 
 	logrus.Info("Successfully retrieved admin credentials")
 	return adminCredentials, nil
+}
+
+func retrieveUtilAccountCreds(ctx context.Context, secretsManagerClient config.SecretsManagerAPI) (models.UtilACcountCreds, error) {
+	secretName := os.Getenv("PDS_UTIL_ACCOUNT_CREDS")
+	input, err := config.RetrieveSecret(ctx, secretName, secretsManagerClient)
+	if err != nil {
+		logrus.WithError(err).
+			WithField("secret_name", secretName).
+			Error("Failed to retrieve util account credentials from Secrets Manager")
+		return models.UtilACcountCreds{}, fmt.Errorf("error retrieving util account credentials from Secrets Manager (%s): %w", secretName, err)
+	}
+
+	var utilAccountCreds models.UtilACcountCreds
+	err = json.Unmarshal([]byte(input), &utilAccountCreds)
+	if err != nil {
+		logrus.WithError(err).
+			WithField("secret_content", input).
+			Error("Failed to unmarshal util account credentials")
+		return models.UtilACcountCreds{}, fmt.Errorf("invalid util account credentials format: %w", err)
+	}
+
+	logrus.WithField("username", utilAccountCreds.Username).Info("Successfully retrieved util account credentials")
+	return utilAccountCreds, nil
 }
 
 func validateAndFormatUser(event models.UserRequest) (models.UserRequest, error) {
@@ -73,46 +95,64 @@ func validateAndFormatUser(event models.UserRequest) (models.UserRequest, error)
 	return event, nil
 }
 
-func UserHandler(ctx context.Context, event models.UserRequest) (events.APIGatewayProxyResponse, error) {
+func UserHandler(ctx context.Context, event models.UserRequest) (*models.CreateUserResponse, error) {
 	logrus.WithField("handle", event.Handle).Info("Processing create account request")
 
 	updatedEvent, err := validateAndFormatUser(event)
 	if err != nil {
 		logrus.WithError(err).Warn("Validation error")
-		return events.APIGatewayProxyResponse{
-			StatusCode: 400,
-			Body:       fmt.Sprintf(`{"error": %q}`, err.Error()),
-		}, nil
+		return nil, fmt.Errorf("validation error: %w", err)
 	}
 	event = updatedEvent
 
 	cfg, awsCfg, err := config.LoadConfig(ctx)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to load application configuration")
-		return events.APIGatewayProxyResponse{
-			StatusCode: 500,
-			Body:       `{"error":"Could not load application configuration"}`,
-		}, nil
+		return nil, fmt.Errorf("internal error: failed to load application configuration")
 	}
 
 	secretsManagerClient := secretsmanager.NewFromConfig(awsCfg)
 	adminCreds, err := retrieveAdminCredentials(ctx, secretsManagerClient)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to retrieve admin credentials from Secrets Manager")
-		return events.APIGatewayProxyResponse{
-			StatusCode: 500,
-			Body:       `{"error":"Could not retrieve admin credentials"}`,
-		}, nil
+		return nil, fmt.Errorf("internal error: could not retrieve admin credentials")
 	}
 
 	atProtoClient := ATProtocol.NewATProtocolClient(cfg.AtProtoBaseURL, &http.Client{})
+	logrus.WithField("base_url", cfg.AtProtoBaseURL).Info("Initializing ATProtocol client")
+
 	inviteCode, err := atProtoClient.CreateInviteCode(adminCreds)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to generate invite code using AT Protocol")
-		return events.APIGatewayProxyResponse{
-			StatusCode: 500,
-			Body:       `{"error":"Could not generate invite code"}`,
-		}, nil
+		return nil, fmt.Errorf("internal error: failed to generate invite code")
+	}
+
+	utilAccountCreds, err := retrieveUtilAccountCreds(ctx, secretsManagerClient)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to retrieve util account credentials from Secrets Manager")
+		return nil, fmt.Errorf("internal error: could not retrieve authentication credentials")
+	}
+
+	session, err := atProtoClient.CreateSession(utilAccountCreds.Username, utilAccountCreds.Password)
+	if err != nil {
+		logrus.WithFields(logrus.Fields{
+			"username": utilAccountCreds.Username,
+			"error":    err.Error(),
+		}).Error("Failed to authenticate with AT Protocol")
+		return nil, fmt.Errorf("authentication failed for user %s", utilAccountCreds.Username)
+	}
+
+	logrus.Info("Session created successfully")
+
+	exists, err := atProtoClient.CheckUserExists(event.Handle, session.AccessJwt)
+	if err != nil {
+		logrus.WithError(err).WithField("handle", event.Handle).Error("Failed to check user existence")
+		return nil, fmt.Errorf("internal error: failed to check if user exists")
+	}
+
+	if exists {
+		logrus.WithField("handle", event.Handle).Warn("User already exists on PDS")
+		return nil, fmt.Errorf("user already exists with handle: %s", event.Handle)
 	}
 
 	user, err := atProtoClient.RegisterUser(event.Handle, event.Email, inviteCode.Code)
@@ -121,10 +161,7 @@ func UserHandler(ctx context.Context, event models.UserRequest) (events.APIGatew
 			"handle": event.Handle,
 			"email":  event.Email,
 		}).Error("Failed to register user via AT Protocol")
-		return events.APIGatewayProxyResponse{
-			StatusCode: 500,
-			Body:       `{"error":"User registration failed"}`,
-		}, nil
+		return nil, fmt.Errorf("failed to register user: %s", err)
 	}
 
 	dynamoDBClient := dynamodb.NewFromConfig(awsCfg)
@@ -135,26 +172,13 @@ func UserHandler(ctx context.Context, event models.UserRequest) (events.APIGatew
 			"user_id": user.DID,
 			"handle":  user.Handle,
 		}).Error("Failed to store user in DynamoDB")
-		return events.APIGatewayProxyResponse{
-			StatusCode: 500,
-			Body:       `{"error":"Failed to store user data"}`,
-		}, nil
+		return nil, fmt.Errorf("internal error: failed to store user data")
 	}
 
-	responseBody, err := json.Marshal(user)
-	if err != nil {
-		logrus.WithError(err).WithField("user_id", user.DID).Error("Failed to serialize user response")
-		return events.APIGatewayProxyResponse{
-			StatusCode: 500,
-			Body:       `{"error":"Internal Server Error"}`,
-		}, nil
-	}
+	logrus.WithFields(logrus.Fields{
+		"did":    user.DID,
+		"handle": user.Handle,
+	}).Info("Successfully created and stored user")
 
-	return events.APIGatewayProxyResponse{
-		StatusCode: 201,
-		Headers: map[string]string{
-			"Content-Type": "application/json",
-		},
-		Body: string(responseBody),
-	}, nil
+	return &user, nil
 }

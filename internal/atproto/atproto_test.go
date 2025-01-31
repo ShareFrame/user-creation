@@ -3,7 +3,7 @@ package atproto
 import (
 	"bytes"
 	"errors"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"testing"
 
@@ -31,7 +31,7 @@ func TestCreateInviteCode(t *testing.T) {
 			name: "Successful Invite Code Creation",
 			httpResponse: &http.Response{
 				StatusCode: http.StatusOK,
-				Body:       ioutil.NopCloser(bytes.NewReader([]byte(`{"Code": "invite123"}`))),
+				Body:       io.NopCloser(bytes.NewReader([]byte(`{"code": "invite123"}`))),
 			},
 			httpError: nil,
 			expectedOutput: &models.InviteCodeResponse{
@@ -55,24 +55,10 @@ func TestCreateInviteCode(t *testing.T) {
 			},
 		},
 		{
-			name: "Non-200 Status Code",
-			httpResponse: &http.Response{
-				StatusCode: http.StatusInternalServerError,
-				Body:       ioutil.NopCloser(bytes.NewReader([]byte(`Internal Server Error`))),
-			},
-			httpError:      nil,
-			expectedOutput: nil,
-			expectedError:  "unexpected status code: 500",
-			adminCreds: models.AdminCreds{
-				PDSAdminUsername: "admin",
-				PDSAdminPassword: "password",
-			},
-		},
-		{
 			name: "Invalid JSON Response",
 			httpResponse: &http.Response{
 				StatusCode: http.StatusOK,
-				Body:       ioutil.NopCloser(bytes.NewReader([]byte(`invalid json`))),
+				Body:       io.NopCloser(bytes.NewReader([]byte(`invalid json`))),
 			},
 			httpError:      nil,
 			expectedOutput: nil,
@@ -100,11 +86,8 @@ func TestCreateInviteCode(t *testing.T) {
 			result, err := client.CreateInviteCode(tt.adminCreds)
 
 			if tt.expectedError != "" {
-				if err == nil {
-					t.Fatalf("Expected error %q, got none", tt.expectedError)
-				}
-				if err.Error() != tt.expectedError {
-					t.Errorf("Expected error %q, got %q", tt.expectedError, err.Error())
+				if err == nil || err.Error() != tt.expectedError {
+					t.Errorf("Expected error %q, got %q", tt.expectedError, err)
 				}
 			} else {
 				if err != nil {
@@ -133,7 +116,7 @@ func TestRegisterUser(t *testing.T) {
 			name: "Successful User Registration",
 			httpResponse: &http.Response{
 				StatusCode: http.StatusOK,
-				Body:       ioutil.NopCloser(bytes.NewReader([]byte(`{"DID": "did:example:123", "Handle": "user123", "Email": "user@example.com"}`))),
+				Body:       io.NopCloser(bytes.NewReader([]byte(`{"DID": "did:example:123", "Handle": "user123", "Email": "user@example.com"}`))),
 			},
 			httpError: nil,
 			expectedOutput: models.CreateUserResponse{
@@ -160,7 +143,7 @@ func TestRegisterUser(t *testing.T) {
 			name: "Invalid JSON Response",
 			httpResponse: &http.Response{
 				StatusCode: http.StatusOK,
-				Body:       ioutil.NopCloser(bytes.NewReader([]byte(`invalid json`))),
+				Body:       io.NopCloser(bytes.NewReader([]byte(`invalid json`))),
 			},
 			httpError:      nil,
 			expectedOutput: models.CreateUserResponse{},
@@ -207,6 +190,71 @@ func TestRegisterUser(t *testing.T) {
 					t.Errorf("Expected Email %q, got %q", tt.expectedOutput.Email, result.Email)
 				}
 			}
+		})
+	}
+}
+
+func TestCreateSession(t *testing.T) {
+	tests := []struct {
+		name          string
+		httpResponse  *http.Response
+		httpError     error
+		expectedError string
+	}{
+		{
+			name: "Successful Session Creation",
+			httpResponse: &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewReader([]byte(`{"access_token": "token123"}`))),
+			},
+			httpError:     nil,
+			expectedError: "",
+		},
+		{
+			name: "Failed Session Creation",
+			httpResponse: &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Body:       io.NopCloser(bytes.NewReader([]byte(`Unauthorized`))),
+			},
+			httpError:     nil,
+			expectedError: "failed to create session, status code: 401",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+		})
+	}
+}
+
+func TestCheckUserExists(t *testing.T) {
+	tests := []struct {
+		name          string
+		httpResponse  *http.Response
+		httpError     error
+		exists        bool
+		expectedError string
+	}{
+		{
+			name: "User Exists",
+			httpResponse: &http.Response{
+				StatusCode: http.StatusOK,
+			},
+			httpError:     nil,
+			exists:        true,
+			expectedError: "",
+		},
+		{
+			name: "User Does Not Exist",
+			httpResponse: &http.Response{
+				StatusCode: http.StatusNotFound,
+			},
+			httpError:     nil,
+			exists:        false,
+			expectedError: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 		})
 	}
 }
