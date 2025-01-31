@@ -122,7 +122,6 @@ func TestRegisterUser(t *testing.T) {
 			expectedOutput: models.CreateUserResponse{
 				DID:    "did:example:123",
 				Handle: "user123",
-				Email:  "user@example.com",
 			},
 			expectedError: "",
 			handle:        "user123",
@@ -185,9 +184,6 @@ func TestRegisterUser(t *testing.T) {
 				}
 				if result.Handle != tt.expectedOutput.Handle {
 					t.Errorf("Expected Handle %q, got %q", tt.expectedOutput.Handle, result.Handle)
-				}
-				if result.Email != tt.expectedOutput.Email {
-					t.Errorf("Expected Email %q, got %q", tt.expectedOutput.Email, result.Email)
 				}
 			}
 		})

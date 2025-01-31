@@ -35,7 +35,6 @@ func TestStoreUser(t *testing.T) {
 			name: "Successful Store",
 			user: models.CreateUserResponse{
 				DID:    "did:example:123",
-				Email:  "user@example.com",
 				Handle: "user123",
 			},
 			event: models.UserRequest{
@@ -52,7 +51,6 @@ func TestStoreUser(t *testing.T) {
 			name: "Missing User DID",
 			user: models.CreateUserResponse{
 				DID:    "",
-				Email:  "user@example.com",
 				Handle: "user123",
 			},
 			mockOutput:    nil,
@@ -65,7 +63,6 @@ func TestStoreUser(t *testing.T) {
 			name: "Invalid Time Zone",
 			user: models.CreateUserResponse{
 				DID:    "did:example:123",
-				Email:  "user@example.com",
 				Handle: "user123",
 			},
 			event: models.UserRequest{
@@ -82,7 +79,6 @@ func TestStoreUser(t *testing.T) {
 			name: "DynamoDB Error",
 			user: models.CreateUserResponse{
 				DID:    "did:example:123",
-				Email:  "user@example.com",
 				Handle: "user123",
 			},
 			event: models.UserRequest{

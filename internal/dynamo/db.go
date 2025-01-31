@@ -71,7 +71,7 @@ func (d *DynamoClient) StoreUser(user models.CreateUserResponse, event models.Us
 	if err != nil {
 		logrus.WithFields(logrus.Fields{
 			"user_id": user.DID,
-			"email":   user.Email,
+			"email":   event.Email,
 			"handle":  user.Handle,
 			"item":    item,
 		}).Error("Failed to store user in DynamoDB")
@@ -80,7 +80,7 @@ func (d *DynamoClient) StoreUser(user models.CreateUserResponse, event models.Us
 
 	logrus.WithFields(logrus.Fields{
 		"user_id": user.DID,
-		"email":   user.Email,
+		"email":   event.Email,
 		"handle":  user.Handle,
 		"status":  DefaultStatus,
 		"role":    DefaultRole,
