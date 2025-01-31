@@ -14,6 +14,8 @@ import (
 )
 
 const (
+	CreateSessionEndpoint    = "/xrpc/com.atproto.server.createSession"
+	GetProfileEndpoint       = "/xrpc/app.bsky.actor.getProfile?actor=%s"
 	CreateInviteCodeEndpoint = "/xrpc/com.atproto.server.createInviteCode"
 	RegisterUserEndpoint     = "/xrpc/com.atproto.server.createAccount"
 	useCount                 = 1
@@ -38,7 +40,6 @@ func NewATProtocolClient(baseURL string, client HTTPClient) *ATProtocolClient {
 
 func (c *ATProtocolClient) CreateSession(identifier, password string) (*models.SessionResponse, error) {
 	logrus.WithField("identifier", identifier).Info("Attempting to create session")
-	url := "/xrpc/com.atproto.server.createSession"
 
 	payload := models.SessionRequest{
 		Identifier: identifier,
@@ -55,7 +56,7 @@ func (c *ATProtocolClient) CreateSession(identifier, password string) (*models.S
 		"Content-Type": "application/json",
 	}
 
-	resp, err := c.doPost(url, data, headers)
+	resp, err := c.doPost(CreateSessionEndpoint, data, headers)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to execute session creation request")
 		return nil, fmt.Errorf("failed to create session request: %w", err)
@@ -65,7 +66,7 @@ func (c *ATProtocolClient) CreateSession(identifier, password string) (*models.S
 	if resp.StatusCode != http.StatusOK {
 		logrus.WithFields(logrus.Fields{
 			"status_code": resp.StatusCode,
-			"url":         url,
+			"url":         CreateSessionEndpoint,
 		}).Error("Session creation failed")
 		return nil, fmt.Errorf("failed to create session, status code: %d", resp.StatusCode)
 	}
@@ -131,7 +132,7 @@ func (c *ATProtocolClient) CreateInviteCode(adminCreds models.AdminCreds) (*mode
 }
 
 func (c *ATProtocolClient) CheckUserExists(handle, token string) (bool, error) {
-	url := fmt.Sprintf("/xrpc/app.bsky.actor.getProfile?actor=%s", handle)
+	url := fmt.Sprintf(GetProfileEndpoint, handle)
 	logrus.WithField("handle", handle).Info("Checking if user exists on PDS")
 
 	req, err := http.NewRequest("GET", c.BaseURL+url, nil)
