@@ -21,7 +21,6 @@ type InviteCodeResponse struct {
 
 type CreateUserResponse struct {
 	Handle     string `json:"handle"`
-	Email      string `json:"email"`
 	DID        string `json:"did"`
 	AccessJWT  string `json:"accessJwt"`
 	RefreshJWT string `json:"refreshJwt"`
