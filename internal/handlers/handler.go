@@ -83,7 +83,7 @@ func UserHandler(ctx context.Context, event models.UserRequest) (*models.CreateU
 		return nil, fmt.Errorf("user already exists with handle: %s", event.Handle)
 	}
 
-	user, err := atProtoClient.RegisterUser(event.Handle, event.Email, inviteCode.Code)
+	user, err := atProtoClient.RegisterUser(event.Handle, event.Email, inviteCode.Code, event.Password)
 	if err != nil {
 		logrus.WithError(err).WithFields(logrus.Fields{
 			"handle": event.Handle,

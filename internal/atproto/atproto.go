@@ -168,7 +168,7 @@ func (c *ATProtocolClient) CheckUserExists(handle, token string) (bool, error) {
 	return false, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 }
 
-func (c *ATProtocolClient) RegisterUser(handle, email, inviteCode string) (models.CreateUserResponse, error) {
+func (c *ATProtocolClient) RegisterUser(handle, email, inviteCode, password string) (models.CreateUserResponse, error) {
 	if handle == "" || email == "" || inviteCode == "" {
 		logrus.Warn("Missing handle, email, or invite code")
 		return models.CreateUserResponse{}, fmt.Errorf("handle, email, and inviteCode are required")
@@ -193,6 +193,7 @@ func (c *ATProtocolClient) RegisterUser(handle, email, inviteCode string) (model
 		"handle":     handle,
 		"email":      email,
 		"inviteCode": inviteCode,
+		"password":   password,
 	}).Info("Sending request to register user")
 
 	resp, err := c.doPost(RegisterUserEndpoint, body, headers)
