@@ -31,6 +31,33 @@ func (m *mockSecretsManagerClient) GetSecretValue(ctx context.Context,
 	return args.Get(0).(*secretsmanager.GetSecretValueOutput), args.Error(1)
 }
 
+func TestValidatePassword(t *testing.T) {
+	tests := []struct {
+		name        string
+		password    string
+		expectedErr string
+	}{
+		{"Valid Password", "Strong@123", ""},
+		{"Too Short", "Short1!", "password must be at least 8 characters long and include at least one uppercase letter, one lowercase letter, one digit, and one special character"},
+		{"No Uppercase", "weakpassword1!", "password must be at least 8 characters long and include at least one uppercase letter, one lowercase letter, one digit, and one special character"},
+		{"No Lowercase", "WEAKPASSWORD1!", "password must be at least 8 characters long and include at least one uppercase letter, one lowercase letter, one digit, and one special character"},
+		{"No Digit", "NoDigits!!", "password must be at least 8 characters long and include at least one uppercase letter, one lowercase letter, one digit, and one special character"},
+		{"No Special Character", "NoSpecial1", "password must be at least 8 characters long and include at least one uppercase letter, one lowercase letter, one digit, and one special character"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidatePassword(test.password)
+			if test.expectedErr != "" {
+				assert.Error(t, err)
+				assert.Equal(t, test.expectedErr, err.Error())
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestValidateAndFormatUser(t *testing.T) {
 	mockDynamo := new(mockDynamoClient)
 
@@ -44,33 +71,41 @@ func TestValidateAndFormatUser(t *testing.T) {
 	}{
 		{
 			name:        "Valid User",
-			input:       models.UserRequest{Handle: "validuser", Email: "user@example.com"},
+			input:       models.UserRequest{Handle: "validuser", Email: "user@example.com", Password: "Valid@123"},
 			emailExists: false,
 			expectedErr: "",
-			expectedOut: models.UserRequest{Handle: "validuser.shareframe.social", Email: "user@example.com"},
+			expectedOut: models.UserRequest{Handle: "validuser.shareframe.social", Email: "user@example.com", Password: "Valid@123"},
 		},
 		{
 			name:        "Email Already Taken",
-			input:       models.UserRequest{Handle: "validuser", Email: "user@example.com"},
+			input:       models.UserRequest{Handle: "validuser", Email: "user@example.com", Password: "Valid@123"},
 			emailExists: true,
 			expectedErr: "email is already registered",
 		},
 		{
 			name:        "DynamoDB Email Check Error",
-			input:       models.UserRequest{Handle: "validuser", Email: "user@example.com"},
+			input:       models.UserRequest{Handle: "validuser", Email: "user@example.com", Password: "Valid@123"},
 			emailExists: false,
 			emailErr:    errors.New("DynamoDB error"),
 			expectedErr: "internal error: failed to check email",
+		},
+		{
+			name:        "Weak Password",
+			input:       models.UserRequest{Handle: "validuser", Email: "user@example.com", Password: "weakpass"},
+			emailExists: false,
+			expectedErr: "password must be at least 8 characters long and include at least one uppercase letter, one lowercase letter, one digit, and one special character",
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			mockDynamo.On("CheckEmailExists", mock.Anything, test.input.Email).
-				Return(test.emailExists, test.emailErr).Once()
-
+			if test.expectedErr == "" || test.expectedErr == "email is already registered" || test.expectedErr == "internal error: failed to check email" {
+				mockDynamo.On("CheckEmailExists", mock.Anything, test.input.Email).
+					Return(test.emailExists, test.emailErr).Once()
+			}
+	
 			output, err := ValidateAndFormatUser(context.TODO(), test.input, mockDynamo)
-
+	
 			if test.expectedErr != "" {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), test.expectedErr)
@@ -78,10 +113,11 @@ func TestValidateAndFormatUser(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, test.expectedOut, output)
 			}
-
+	
 			mockDynamo.AssertExpectations(t)
 		})
 	}
+	
 }
 
 func TestRetrieveAdminCredentials(t *testing.T) {
