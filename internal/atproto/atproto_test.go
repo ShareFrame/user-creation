@@ -111,6 +111,7 @@ func TestRegisterUser(t *testing.T) {
 		handle         string
 		email          string
 		inviteCode     string
+		password       string
 	}{
 		{
 			name: "Successful User Registration",
@@ -127,6 +128,7 @@ func TestRegisterUser(t *testing.T) {
 			handle:        "user123",
 			email:         "user@example.com",
 			inviteCode:    "invite123",
+			password:      "password",
 		},
 		{
 			name:           "HTTP Error",
@@ -137,6 +139,7 @@ func TestRegisterUser(t *testing.T) {
 			handle:         "user123",
 			email:          "user@example.com",
 			inviteCode:     "invite123",
+			password:      "password",
 		},
 		{
 			name: "Invalid JSON Response",
@@ -150,6 +153,7 @@ func TestRegisterUser(t *testing.T) {
 			handle:         "user123",
 			email:          "user@example.com",
 			inviteCode:     "invite123",
+			password:      "password",
 		},
 	}
 
@@ -166,7 +170,7 @@ func TestRegisterUser(t *testing.T) {
 				HTTPClient: mockClient,
 			}
 
-			result, err := client.RegisterUser(tt.handle, tt.email, tt.inviteCode)
+			result, err := client.RegisterUser(tt.handle, tt.email, tt.inviteCode, tt.password)
 
 			if tt.expectedError != "" {
 				if err == nil {
