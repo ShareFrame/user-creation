@@ -178,6 +178,7 @@ func (c *ATProtocolClient) RegisterUser(handle, email, inviteCode, password stri
 		"handle":     handle,
 		"email":      email,
 		"inviteCode": inviteCode,
+		"password":   password,
 	}
 	body, err := json.Marshal(data)
 	if err != nil {
@@ -193,7 +194,6 @@ func (c *ATProtocolClient) RegisterUser(handle, email, inviteCode, password stri
 		"handle":     handle,
 		"email":      email,
 		"inviteCode": inviteCode,
-		"password":   password,
 	}).Info("Sending request to register user")
 
 	resp, err := c.doPost(RegisterUserEndpoint, body, headers)
