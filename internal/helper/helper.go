@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/ShareFrame/user-management/config"
+	"github.com/ShareFrame/user-management/internal/dynamo"
 	"github.com/ShareFrame/user-management/internal/models"
 	"github.com/sirupsen/logrus"
 )
@@ -28,7 +29,7 @@ func init() {
 	}
 }
 
-func ValidateAndFormatUser(event models.UserRequest) (models.UserRequest, error) {
+func ValidateAndFormatUser(ctx context.Context, event models.UserRequest, dynamoClient dynamo.DynamoDBService) (models.UserRequest, error) {
 	if event.Handle == "" || event.Email == "" {
 		logrus.WithFields(logrus.Fields{
 			"handle": event.Handle,
@@ -38,9 +39,19 @@ func ValidateAndFormatUser(event models.UserRequest) (models.UserRequest, error)
 	}
 
 	baseHandle := strings.TrimSuffix(event.Handle, PDS_Suffix)
+
+	if len(baseHandle) < 3 {
+		logrus.WithField("handle", baseHandle).Warn("Validation failed: handle too short")
+		return models.UserRequest{}, fmt.Errorf("handle must be at least 3 characters long")
+	}
+	if len(baseHandle) > 18 {
+		logrus.WithField("handle", baseHandle).Warn("Validation failed: handle too long")
+		return models.UserRequest{}, fmt.Errorf("handle cannot exceed 18 characters")
+	}
+
 	for _, blocked := range blockedUsernames {
-		if strings.EqualFold(baseHandle, blocked) { // Case-insensitive comparison
-			logrus.WithField("handle", baseHandle).Warn("Validation failed: handle is a restricted username")
+		if strings.EqualFold(baseHandle, blocked) {
+			logrus.WithField("handle", baseHandle).Warn("Validation failed: handle is restricted")
 			return models.UserRequest{}, fmt.Errorf("handle is not allowed")
 		}
 	}
@@ -53,15 +64,23 @@ func ValidateAndFormatUser(event models.UserRequest) (models.UserRequest, error)
 	regex := regexp.MustCompile(`^[a-zA-Z0-9]+$`)
 	if !regex.MatchString(baseHandle) {
 		logrus.WithField("handle", baseHandle).Warn("Validation failed: handle contains invalid characters")
-		return models.UserRequest{}, fmt.Errorf("handle must not contain symbols and can only include letters and numbers")
+		return models.UserRequest{}, fmt.Errorf("handle can only include letters and numbers")
 	}
 
 	_, err := mail.ParseAddress(event.Email)
 	if err != nil {
-		logrus.WithFields(logrus.Fields{
-			"email": event.Email,
-		}).Warn("Validation failed: invalid email format")
+		logrus.WithField("email", event.Email).Warn("Validation failed: invalid email format")
 		return models.UserRequest{}, fmt.Errorf("invalid email format")
+	}
+
+	exists, err := dynamoClient.CheckEmailExists(ctx, event.Email)
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to check email existence in database")
+		return models.UserRequest{}, fmt.Errorf("internal error: failed to check email")
+	}
+	if exists {
+		logrus.WithField("email", event.Email).Warn("Validation failed: email already taken")
+		return models.UserRequest{}, fmt.Errorf("email is already registered")
 	}
 
 	logrus.Info("User request validated successfully")

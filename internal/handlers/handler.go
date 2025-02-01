@@ -23,18 +23,21 @@ const (
 func UserHandler(ctx context.Context, event models.UserRequest) (*models.CreateUserResponse, error) {
 	logrus.WithField("handle", event.Handle).Info("Processing create account request")
 
-	updatedEvent, err := helper.ValidateAndFormatUser(event)
-	if err != nil {
-		logrus.WithError(err).Warn("Validation error")
-		return nil, fmt.Errorf("validation error: %w", err)
-	}
-	event = updatedEvent
-
 	cfg, awsCfg, err := config.LoadConfig(ctx)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to load application configuration")
 		return nil, fmt.Errorf("internal error: failed to load application configuration")
 	}
+
+	dynamoDBClient := dynamodb.NewFromConfig(awsCfg)
+	dynamoClient := dynamo.NewDynamoClient(dynamoDBClient, cfg.DynamoTableName, defaultTimeZone)
+
+	updatedEvent, err := helper.ValidateAndFormatUser(ctx, event, dynamoClient)
+	if err != nil {
+		logrus.WithError(err).Warn("Validation error")
+		return nil, fmt.Errorf("validation error: %w", err)
+	}
+	event = updatedEvent
 
 	secretsManagerClient := secretsmanager.NewFromConfig(awsCfg)
 	adminCreds, err := helper.RetrieveAdminCredentials(ctx, secretsManagerClient)
@@ -89,8 +92,6 @@ func UserHandler(ctx context.Context, event models.UserRequest) (*models.CreateU
 		return nil, fmt.Errorf("failed to register user: %s", err)
 	}
 
-	dynamoDBClient := dynamodb.NewFromConfig(awsCfg)
-	dynamoClient := dynamo.NewDynamoClient(dynamoDBClient, cfg.DynamoTableName, defaultTimeZone)
 	err = dynamoClient.StoreUser(user, updatedEvent)
 	if err != nil {
 		logrus.WithError(err).WithFields(logrus.Fields{
