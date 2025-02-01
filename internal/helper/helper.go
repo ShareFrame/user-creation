@@ -20,7 +20,10 @@ import (
 var blockedUsernamesData []byte
 var blockedUsernames []string
 
-const PDS_Suffix = ".shareframe.social"
+const (
+	PDS_Suffix = ".shareframe.social"
+	Password_Error = "password must be at least 8 characters long and include at least one uppercase letter, one lowercase letter, one digit, and one special character"
+)
 
 func init() {
 	err := json.Unmarshal(blockedUsernamesData, &blockedUsernames)
@@ -30,52 +33,33 @@ func init() {
 }
 
 func ValidateAndFormatUser(ctx context.Context, event models.UserRequest, dynamoClient dynamo.DynamoDBService) (models.UserRequest, error) {
-	if event.Handle == "" || event.Email == "" {
-		logrus.WithFields(logrus.Fields{
-			"handle": event.Handle,
-			"email":  event.Email,
-		}).Warn("Validation failed: handle or email is missing")
-		return models.UserRequest{}, fmt.Errorf("handle and email are required fields")
+	if event.Handle == "" || event.Email == "" || event.Password == "" {
+		logrus.Warn("Validation failed: missing handle, email, or password")
+		return models.UserRequest{}, fmt.Errorf("handle, email, and password are required fields")
 	}
 
 	baseHandle := strings.TrimSuffix(event.Handle, PDS_Suffix)
 
-	if len(baseHandle) < 3 {
-		logrus.WithField("handle", baseHandle).Warn("Validation failed: handle too short")
-		return models.UserRequest{}, fmt.Errorf("handle must be at least 3 characters long")
-	}
-	if len(baseHandle) > 18 {
-		logrus.WithField("handle", baseHandle).Warn("Validation failed: handle too long")
-		return models.UserRequest{}, fmt.Errorf("handle cannot exceed 18 characters")
+	if err := validateHandle(baseHandle); err != nil {
+		logrus.WithField("handle", baseHandle).Warn("Validation failed:", err)
+		return models.UserRequest{}, err
 	}
 
-	for _, blocked := range blockedUsernames {
-		if strings.EqualFold(baseHandle, blocked) {
-			logrus.WithField("handle", baseHandle).Warn("Validation failed: handle is restricted")
-			return models.UserRequest{}, fmt.Errorf("handle is not allowed")
-		}
+	event.Handle = ensureHandleSuffix(baseHandle)
+
+	if err := validateEmail(event.Email); err != nil {
+		logrus.WithField("email", event.Email).Warn("Validation failed:", err)
+		return models.UserRequest{}, err
 	}
 
-	if !strings.HasSuffix(event.Handle, PDS_Suffix) {
-		event.Handle = fmt.Sprintf("%s%s", baseHandle, PDS_Suffix)
-		logrus.WithField("updated_handle", event.Handle).Info("Updated handle to include domain")
-	}
-
-	regex := regexp.MustCompile(`^[a-zA-Z0-9]+$`)
-	if !regex.MatchString(baseHandle) {
-		logrus.WithField("handle", baseHandle).Warn("Validation failed: handle contains invalid characters")
-		return models.UserRequest{}, fmt.Errorf("handle can only include letters and numbers")
-	}
-
-	_, err := mail.ParseAddress(event.Email)
-	if err != nil {
-		logrus.WithField("email", event.Email).Warn("Validation failed: invalid email format")
-		return models.UserRequest{}, fmt.Errorf("invalid email format")
+	if err := ValidatePassword(event.Password); err != nil {
+		logrus.WithError(err).Warn("Validation failed: invalid password")
+		return models.UserRequest{}, fmt.Errorf("password validation failed: %w", err)
 	}
 
 	exists, err := dynamoClient.CheckEmailExists(ctx, event.Email)
 	if err != nil {
-		logrus.WithError(err).Warn("Failed to check email existence in database")
+		logrus.WithError(err).Error("Database error: failed to check email existence")
 		return models.UserRequest{}, fmt.Errorf("internal error: failed to check email")
 	}
 	if exists {
@@ -86,6 +70,55 @@ func ValidateAndFormatUser(ctx context.Context, event models.UserRequest, dynamo
 	logrus.Info("User request validated successfully")
 	return event, nil
 }
+
+func validateHandle(handle string) error {
+	if len(handle) < 3 {
+		return fmt.Errorf("handle must be at least 3 characters long")
+	}
+	if len(handle) > 18 {
+		return fmt.Errorf("handle cannot exceed 18 characters")
+	}
+	for _, blocked := range blockedUsernames {
+		if strings.EqualFold(handle, blocked) {
+			return fmt.Errorf("handle is not allowed")
+		}
+	}
+	if !regexp.MustCompile(`^[a-zA-Z0-9]+$`).MatchString(handle) {
+		return fmt.Errorf("handle can only include letters and numbers")
+	}
+	return nil
+}
+
+func ensureHandleSuffix(handle string) string {
+	fullHandle := handle + PDS_Suffix
+	logrus.WithField("updated_handle", fullHandle).Info("Updated handle to include domain")
+	return fullHandle
+}
+
+func validateEmail(email string) error {
+	if _, err := mail.ParseAddress(email); err != nil {
+		return fmt.Errorf("invalid email format")
+	}
+	return nil
+}
+
+func ValidatePassword(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf(Password_Error)
+	}
+
+	hasUpper := regexp.MustCompile(`[A-Z]`).MatchString(password)
+	hasLower := regexp.MustCompile(`[a-z]`).MatchString(password)
+	hasDigit := regexp.MustCompile(`\d`).MatchString(password)
+	hasSpecial := regexp.MustCompile(`[!@#$%^&*()_+\-=\[\]{}|;:'",.<>?/\\]`).MatchString(password)
+
+	if !(hasUpper && hasLower && hasDigit && hasSpecial) {
+		return fmt.Errorf(Password_Error)
+	}
+
+	return nil
+}
+
 
 func retrieveCredentials[T any](ctx context.Context, secretEnvVar string, secretsManagerClient config.SecretsManagerAPI) (T, error) {
 	var creds T

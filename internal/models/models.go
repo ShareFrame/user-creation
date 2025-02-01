@@ -11,8 +11,9 @@ type EmailCreds struct {
 }
 
 type UserRequest struct {
-	Handle string `json:"handle"`
-	Email  string `json:"email"`
+	Handle   string `json:"handle"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
 type InviteCodeResponse struct {
