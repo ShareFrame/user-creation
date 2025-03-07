@@ -11,22 +11,19 @@ import (
 	"github.com/ShareFrame/user-management/internal/models"
 	"github.com/ShareFrame/user-management/internal/postgres"
 	"github.com/aws/aws-sdk-go-v2/service/rdsdata"
-	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/sirupsen/logrus"
 )
 
-func UserHandler(ctx context.Context, event models.UserRequest) (*models.CreateUserResponse, error) {
+func UserHandler(ctx context.Context, event models.UserRequest, secretsManagerClient config.SecretsManagerAPI) (*models.CreateUserResponse, error) {
 	logrus.WithField("handle", event.Handle).Info("Processing create account request")
 
-	cfg, awsCfg, err := config.LoadConfig(ctx)
+	cfg, awsCfg, err := config.LoadConfig(ctx, secretsManagerClient)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to load application configuration")
 		return nil, fmt.Errorf("internal error: failed to load application configuration: %w", err)
 	}
 
 	rdsClient := rdsdata.NewFromConfig(awsCfg)
-	secretsManagerClient := secretsmanager.NewFromConfig(awsCfg)
-
 	dbClient := postgres.NewPostgresDB(rdsClient, cfg.DBClusterARN, cfg.SecretARN, cfg.DatabaseName)
 
 	updatedEvent, err := helper.ValidateAndFormatUser(ctx, event, dbClient)
