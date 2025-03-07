@@ -14,10 +14,18 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func UserHandler(ctx context.Context, event models.UserRequest, secretsManagerClient config.SecretsManagerAPI) (*models.CreateUserResponse, error) {
+type UserHandler struct {
+	SecretsManagerClient config.SecretsManagerAPI
+}
+
+func NewUserHandler(secretsClient config.SecretsManagerAPI) *UserHandler {
+	return &UserHandler{SecretsManagerClient: secretsClient}
+}
+
+func (h *UserHandler) Handle(ctx context.Context, event models.UserRequest) (*models.CreateUserResponse, error) {
 	logrus.WithField("handle", event.Handle).Info("Processing create account request")
 
-	cfg, awsCfg, err := config.LoadConfig(ctx, secretsManagerClient)
+	cfg, awsCfg, err := config.LoadConfig(ctx, h.SecretsManagerClient)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to load application configuration")
 		return nil, fmt.Errorf("internal error: failed to load application configuration: %w", err)
@@ -33,7 +41,7 @@ func UserHandler(ctx context.Context, event models.UserRequest, secretsManagerCl
 	}
 	event = updatedEvent
 
-	adminCreds, err := helper.RetrieveAdminCredentials(ctx, secretsManagerClient)
+	adminCreds, err := helper.RetrieveAdminCredentials(ctx, h.SecretsManagerClient)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to retrieve admin credentials")
 		return nil, fmt.Errorf("internal error: could not retrieve admin credentials: %w", err)
@@ -48,7 +56,7 @@ func UserHandler(ctx context.Context, event models.UserRequest, secretsManagerCl
 		return nil, fmt.Errorf("internal error: failed to generate invite code: %w", err)
 	}
 
-	utilAccountCreds, err := helper.RetrieveUtilAccountCreds(ctx, secretsManagerClient)
+	utilAccountCreds, err := helper.RetrieveUtilAccountCreds(ctx, h.SecretsManagerClient)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to retrieve util account credentials")
 		return nil, fmt.Errorf("internal error: could not retrieve authentication credentials: %w", err)
