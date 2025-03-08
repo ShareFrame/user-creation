@@ -8,10 +8,10 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/ShareFrame/user-management/config"
 	"github.com/ShareFrame/user-management/internal/models"
-	"github.com/ShareFrame/user-management/internal/postgres"
 	"github.com/sirupsen/logrus"
 )
 
@@ -28,7 +28,7 @@ const (
 	BlockedHandle  = "handle is not allowed"
 	HandleTooShort = "handle must be at least 3 characters long"
 	HandleTooLong  = "handle cannot exceed 18 characters"
-	QueryTimeout   = 3
+	QueryTimeout   = 3 * time.Second
 )
 
 var (
@@ -46,7 +46,12 @@ func init() {
 	}
 }
 
-func ValidateAndFormatUser(ctx context.Context, event models.UserRequest, dbClient postgres.PostgresDBService) (models.UserRequest, error) {
+type DatabaseService interface {
+	CheckEmailExists(ctx context.Context, email string) (bool, error)
+	StoreUser(ctx context.Context, user models.CreateUserResponse, event models.UserRequest) error
+}
+
+func ValidateAndFormatUser(ctx context.Context, event models.UserRequest, dbClient DatabaseService) (models.UserRequest, error) {
 	if event.Handle == "" || event.Email == "" || event.Password == "" {
 		logrus.Warn("Validation failed: missing required fields")
 		return models.UserRequest{}, fmt.Errorf("%v", MissingFields)
@@ -70,6 +75,7 @@ func ValidateAndFormatUser(ctx context.Context, event models.UserRequest, dbClie
 		return models.UserRequest{}, fmt.Errorf("password validation failed: %w", err)
 	}
 
+	logrus.Infof("Calling CheckEmailExists for email: %s", event.Email)
 	exists, err := dbClient.CheckEmailExists(ctx, event.Email)
 	if err != nil {
 		logrus.WithError(err).Error("Database error: failed to check email existence")
@@ -84,30 +90,32 @@ func ValidateAndFormatUser(ctx context.Context, event models.UserRequest, dbClie
 	return event, nil
 }
 
-
 func ValidateHandle(handle string) error {
 	if len(handle) < 3 {
-		return fmt.Errorf("handle must be at least 3 characters long: %v", handle)
+		return fmt.Errorf("%v: %v", HandleTooShort, handle)
 	}
 	if len(handle) > 18 {
-		return fmt.Errorf("handle cannot exceed 18 characters: %v", handle)
+		return fmt.Errorf("%v: %v", HandleTooLong, handle)
 	}
 	for _, blocked := range blockedUsernames {
 		if strings.EqualFold(handle, blocked) {
-			return fmt.Errorf("provided handle is not allowed: %v", BlockedHandle)
+			return fmt.Errorf("%v: %v", BlockedHandle, handle)
 		}
 	}
 	if !handleRegex.MatchString(handle) {
-		return fmt.Errorf("provided handle is invalid: %v", InvalidHandle)	
+		return fmt.Errorf("%v: %v", InvalidHandle, handle)
 	}
 	return nil
 }
 
 func EnsureHandleSuffix(handle string) string {
-    if strings.HasSuffix(handle, PDS_Suffix) {
-        return handle
+    trimmedHandle := strings.TrimSpace(handle)
+
+    if strings.HasSuffix(trimmedHandle, PDS_Suffix) {
+        return trimmedHandle
     }
-    return handle + PDS_Suffix
+	
+    return trimmedHandle + PDS_Suffix
 }
 
 
@@ -119,17 +127,13 @@ func ValidateEmail(email string) error {
 }
 
 func ValidatePassword(password string) error {
-	if len(password) < 8 {
-		return fmt.Errorf(PasswordError)
-	}
-
-	if !upperCaseRegex.MatchString(password) ||
+	if len(password) < 8 ||
+		!upperCaseRegex.MatchString(password) ||
 		!lowerCaseRegex.MatchString(password) ||
 		!digitRegex.MatchString(password) ||
 		!specialCharRegex.MatchString(password) {
 		return fmt.Errorf(PasswordError)
 	}
-
 	return nil
 }
 
@@ -139,17 +143,12 @@ func retrieveCredentials[T any](ctx context.Context, secretEnvVar string, secret
 
 	input, err := config.RetrieveSecret(ctx, secretName, secretsManagerClient)
 	if err != nil {
-		logrus.WithFields(logrus.Fields{
-			"secret_name": secretName,
-		}).WithError(err).Error("Failed to retrieve credentials from Secrets Manager")
+		logrus.WithFields(logrus.Fields{"secret_name": secretName}).WithError(err).Error("Failed to retrieve credentials")
 		return creds, fmt.Errorf("error retrieving credentials from Secrets Manager (%s): %w", secretName, err)
 	}
 
 	if err := json.Unmarshal([]byte(input), &creds); err != nil {
-		logrus.WithFields(logrus.Fields{
-			"secret_name":  secretName,
-			"secret_value": input,
-		}).WithError(err).Error("Failed to unmarshal credentials")
+		logrus.WithFields(logrus.Fields{"secret_name": secretName, "secret_value": input}).WithError(err).Error("Failed to unmarshal credentials")
 		return creds, fmt.Errorf("invalid credentials format: %w", err)
 	}
 
