@@ -49,7 +49,6 @@ func (d *DynamoDBClient) StoreUser(ctx context.Context, user models.CreateUserRe
 
 	item := map[string]types.AttributeValue{
 		"UserId":         &types.AttributeValueMemberS{Value: user.DID},
-		"Did":            &types.AttributeValueMemberS{Value: user.DID},
 		"Email":          &types.AttributeValueMemberS{Value: event.Email},
 		"Handle":         &types.AttributeValueMemberS{Value: user.Handle},
 		"CreatedAt":      &types.AttributeValueMemberS{Value: time.Now().Format(time.RFC3339)},
@@ -70,13 +69,12 @@ func (d *DynamoDBClient) StoreUser(ctx context.Context, user models.CreateUserRe
 		Item:      item,
 	})
 	if err != nil {
-		logrus.Errorf("Failed to store user: %v", err)
 		return fmt.Errorf("failed to store user in DynamoDB: %w", err)
 	}
 
-	logrus.Infof("User %s successfully stored in DynamoDB", user.Handle)
 	return nil
 }
+
 
 func (d *DynamoDBClient) CheckEmailExists(ctx context.Context, email string) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, QueryTimeout)
