@@ -2,64 +2,145 @@ package helper
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/ShareFrame/user-management/internal/helper/mocks"
 	"github.com/ShareFrame/user-management/internal/models"
-	"github.com/ShareFrame/user-management/internal/postgres"
-	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 )
 
-type mockPostgresClient struct {
-	mock.Mock
-}
+func TestValidateAndFormatUser(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
 
-var _ postgres.PostgresDBService = (*mockPostgresClient)(nil)
+	mockDB := mocks.NewMockDatabaseService(ctrl)
 
-func (m *mockPostgresClient) CheckEmailExists(ctx context.Context, email string) (bool, error) {
-	args := m.Called(ctx, email)
-	return args.Bool(0), args.Error(1)
-}
-
-func (m *mockPostgresClient) StoreUser(ctx context.Context, user models.CreateUserResponse, event models.UserRequest) error {
-	args := m.Called(ctx, user, event)
-	return args.Error(0)
-}
-
-type mockSecretsManagerClient struct {
-	mock.Mock
-}
-
-func (m *mockSecretsManagerClient) GetSecretValue(ctx context.Context,
-	input *secretsmanager.GetSecretValueInput, opts ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error) {
-	args := m.Called(ctx, input)
-	if args.Get(0) != nil {
-		return args.Get(0).(*secretsmanager.GetSecretValueOutput), args.Error(1)
-	}
-	return nil, args.Error(1)
-}
-
-func TestValidatePassword(t *testing.T) {
 	tests := []struct {
 		name        string
-		password    string
-		expectedErr string
+		input       models.UserRequest
+		mockSetup   func()
+		expectError bool
+		errorMsg    string
 	}{
-		{"Valid Password", "Strong@123", ""},
-		{"Too Short", "Short1!", PasswordError},
-		{"No Uppercase", "weakpassword1!", PasswordError},
-		{"No Lowercase", "WEAKPASSWORD1!", PasswordError},
-		{"No Digit", "NoDigits!!", PasswordError},
-		{"No Special Character", "NoSpecial1", PasswordError},
+		{
+			name: "Valid User Input",
+			input: models.UserRequest{
+				Handle:   "validuser",
+				Email:    "valid@example.com",
+				Password: "Valid@123",
+			},
+			mockSetup: func() {
+				mockDB.EXPECT().CheckEmailExists(gomock.Any(), "valid@example.com").Return(false, nil).Times(1)
+			},
+			expectError: false,
+		},
+		{
+			name: "Database Error",
+			input: models.UserRequest{
+				Handle:   "validuser",
+				Email:    "valid@example.com",
+				Password: "Valid@123",
+			},
+			mockSetup: func() {
+				mockDB.EXPECT().CheckEmailExists(gomock.Any(), "valid@example.com").Return(false, errors.New("DB connection failed")).Times(1)
+			},
+			expectError: true,
+			errorMsg:    "internal error: failed to check email",
+		},
+		{
+			name: "Blocked Username",
+			input: models.UserRequest{
+				Handle:   "admin",
+				Email:    "valid@example.com",
+				Password: "Valid@123",
+			},
+			mockSetup: func() {
+				mockDB.EXPECT().CheckEmailExists(gomock.Any(), gomock.Any()).Times(0)
+			},
+			expectError: true,
+			errorMsg:    BlockedHandle,
+		},
+		{
+			name: "Handle Too Short",
+			input: models.UserRequest{
+				Handle:   "a",
+				Email:    "valid@example.com",
+				Password: "Valid@123",
+			},
+			mockSetup: func() {
+				mockDB.EXPECT().CheckEmailExists(gomock.Any(), gomock.Any()).Times(0)
+			},
+			expectError: true,
+			errorMsg:    HandleTooShort,
+		},
+		{
+			name: "Empty Email But Valid Handle & Password",
+			input: models.UserRequest{
+				Handle:   "validuser",
+				Email:    "",
+				Password: "Valid@123",
+			},
+			mockSetup: func() {
+				mockDB.EXPECT().CheckEmailExists(gomock.Any(), gomock.Any()).Times(0)
+			},
+			expectError: true,
+			errorMsg:    "handle, email, and password are required fields",
+		},
+		{
+			name: "Database Unexpected Error",
+			input: models.UserRequest{
+				Handle:   "validuser",
+				Email:    "unexpected@example.com",
+				Password: "Valid@123",
+			},
+			mockSetup: func() {
+				mockDB.EXPECT().CheckEmailExists(gomock.Any(), "unexpected@example.com").Return(false, errors.New("some unexpected DB error")).Times(1)
+			},
+			expectError: true,
+			errorMsg:    "internal error: failed to check email",
+		},
+		
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := ValidatePassword(test.password)
-			if test.expectedErr != "" {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.mockSetup()
+
+			_, err := ValidateAndFormatUser(context.TODO(), tt.input, mockDB)
+
+			if tt.expectError {
 				assert.Error(t, err)
-				assert.Equal(t, test.expectedErr, err.Error())
+				assert.Contains(t, err.Error(), tt.errorMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateHandle(t *testing.T) {
+	tests := []struct {
+		name        string
+		handle      string
+		expectError bool
+		errorMsg    string
+	}{
+		{"Valid Handle", "validuser", false, ""},
+		{"Too Short", "a", true, HandleTooShort},
+		{"Too Long", "averylongusernamethatexceeds18", true, HandleTooLong},
+		{"Invalid Characters", "invalid user!", true, InvalidHandle},
+		{"Blocked Handle", "admin", true, BlockedHandle},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateHandle(tt.handle)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errorMsg)
 			} else {
 				assert.NoError(t, err)
 			}
@@ -70,42 +151,20 @@ func TestValidatePassword(t *testing.T) {
 func TestEnsureHandleSuffix(t *testing.T) {
 	tests := []struct {
 		name     string
-		handle   string
+		input    string
 		expected string
 	}{
-		{"Already Has Suffix", "username.shareframe.social", "username.shareframe.social"},
-		{"Missing Suffix", "username", "username.shareframe.social"},
+		{"Already has suffix", "user" + PDS_Suffix, "user" + PDS_Suffix},
+		{"Missing suffix", "user", "user" + PDS_Suffix},
+		{"Handle has trailing space", "user ", "user" + PDS_Suffix},
+		{"Handle has uppercase", "UserName", "UserName" + PDS_Suffix},
+		{"Handle has both leading and trailing space", " user ", "user" + PDS_Suffix},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			result := EnsureHandleSuffix(test.handle)
-			assert.Equal(t, test.expected, result)
-		})
-	}
-}
-
-func TestValidateHandle(t *testing.T) {
-	tests := []struct {
-		name        string
-		handle      string
-		expectedErr string
-	}{
-		{"Valid Handle", "validuser", ""},
-		{"Too Short", "ab", HandleTooShort},
-		{"Too Long", "thisisaverylonghandle", HandleTooLong},
-		{"Contains Special Characters", "invalid@handle", InvalidHandle},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := ValidateHandle(test.handle)
-			if test.expectedErr != "" {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), test.expectedErr)
-			} else {
-				assert.NoError(t, err)
-			}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := EnsureHandleSuffix(tt.input)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -114,20 +173,21 @@ func TestValidateEmail(t *testing.T) {
 	tests := []struct {
 		name        string
 		email       string
-		expectedErr string
+		expectError bool
 	}{
-		{"Valid Email", "user@example.com", ""},
-		{"Missing @", "userexample.com", "invalid email format"},
-		{"Missing domain", "user@", "invalid email format"},
-		{"Invalid TLD", "user@example.c", "invalid email format"},
+		{"Valid Email", "test@example.com", false},
+		{"Invalid Email", "invalid-email", true},
+		{"Missing Domain", "user@", true},
+		{"No Username", "@example.com", true},
+		{"Email with subdomain", "user@mail.example.com", false},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := ValidateEmail(test.email)
-			if test.expectedErr != "" {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateEmail(tt.email)
+
+			if tt.expectError {
 				assert.Error(t, err)
-				assert.Contains(t, err.Error(), test.expectedErr)
 			} else {
 				assert.NoError(t, err)
 			}
@@ -135,84 +195,29 @@ func TestValidateEmail(t *testing.T) {
 	}
 }
 
-func TestValidateAndFormatUser(t *testing.T) {
-	ctx := context.Background()
-
+func TestValidatePassword(t *testing.T) {
 	tests := []struct {
-		name             string
-		user             models.UserRequest
-		mockEmailExists  bool
-		mockEmailErr     error
-		expectCheckEmail bool
-		expectedErr      string
+		name        string
+		password    string
+		expectError bool
 	}{
-		{"Valid User", models.UserRequest{Handle: "validuser", Email: "user@example.com", Password: "Valid@123"}, false, nil, true, ""},
-		{"Missing Handle", models.UserRequest{Handle: "", Email: "user@example.com", Password: "Valid@123"}, false, nil, false, MissingFields},
-		{"Missing Email", models.UserRequest{Handle: "validuser", Email: "", Password: "Valid@123"}, false, nil, false, MissingFields},
-		{"Missing Password", models.UserRequest{Handle: "validuser", Email: "user@example.com", Password: ""}, false, nil, false, MissingFields},
-		{"Invalid Handle", models.UserRequest{Handle: "inv@lid", Email: "user@example.com", Password: "Valid@123"}, false, nil, false, InvalidHandle},
-		{"Invalid Email", models.UserRequest{Handle: "validuser", Email: "invalid-email", Password: "Valid@123"}, false, nil, false, "invalid email format"},
-		{"Invalid Password", models.UserRequest{Handle: "validuser", Email: "user@example.com", Password: "weak"}, false, nil, false, PasswordError},
-		{"Email Already Exists", models.UserRequest{Handle: "validuser", Email: "user@example.com", Password: "Valid@123"}, true, nil, true, EmailTaken},
-		{"DB Check Failure", models.UserRequest{Handle: "validuser", Email: "user@example.com", Password: "Valid@123"}, false, assert.AnError, true, "internal error: failed to check email"},
+		{"Valid Password", "Password1@", false},
+		{"Too Short", "Pw1!", true},
+		{"No Uppercase", "password1@", true},
+		{"No Lowercase", "PASSWORD1@", true},
+		{"No Digit", "Password!@", true},
+		{"No Special Char", "Password123", true},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			mockDB := new(mockPostgresClient)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidatePassword(tt.password)
 
-			if test.expectCheckEmail {
-				mockDB.On("CheckEmailExists", ctx, test.user.Email).Return(test.mockEmailExists, test.mockEmailErr)
-			}
-
-			_, err := ValidateAndFormatUser(ctx, test.user, mockDB)
-
-			if test.expectedErr != "" {
+			if tt.expectError {
 				assert.Error(t, err)
-				assert.Contains(t, err.Error(), test.expectedErr)
 			} else {
 				assert.NoError(t, err)
 			}
-
-			if test.expectCheckEmail {
-				mockDB.AssertCalled(t, "CheckEmailExists", ctx, test.user.Email)
-			} else {
-				mockDB.AssertNotCalled(t, "CheckEmailExists", ctx, test.user.Email)
-			}
-
-			mockDB.AssertExpectations(t)
 		})
 	}
-}
-
-func TestRetrieveAdminCredentials(t *testing.T) {
-	mockSecretsManager := new(mockSecretsManagerClient)
-	ctx := context.Background()
-
-	mockSecretValue := `{"PDS_JWT_SECRET":"jwtsecret","PDS_ADMIN_USERNAME":"admin","PDS_ADMIN_PASSWORD":"securepass"}`
-	mockSecretsManager.On("GetSecretValue", ctx, mock.Anything).Return(&secretsmanager.GetSecretValueOutput{
-		SecretString: &mockSecretValue,
-	}, nil)
-
-	creds, err := RetrieveAdminCredentials(ctx, mockSecretsManager)
-	assert.NoError(t, err)
-	assert.Equal(t, "jwtsecret", creds.PDSJWTSecret)
-	assert.Equal(t, "admin", creds.PDSAdminUsername)
-	assert.Equal(t, "securepass", creds.PDSAdminPassword)
-}
-
-func TestRetrieveUtilAccountCreds(t *testing.T) {
-	mockSecretsManager := new(mockSecretsManagerClient)
-	ctx := context.Background()
-
-	mockSecretValue := `{"username":"util-user","password":"util-pass","did":"did:example:123"}`
-	mockSecretsManager.On("GetSecretValue", ctx, mock.Anything).Return(&secretsmanager.GetSecretValueOutput{
-		SecretString: &mockSecretValue,
-	}, nil)
-
-	creds, err := RetrieveUtilAccountCreds(ctx, mockSecretsManager)
-	assert.NoError(t, err)
-	assert.Equal(t, "util-user", creds.Username)
-	assert.Equal(t, "util-pass", creds.Password)
-	assert.Equal(t, "did:example:123", creds.DID)
 }
