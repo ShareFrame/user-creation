@@ -2,7 +2,6 @@ package config
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -30,60 +29,22 @@ func TestLoadConfig(t *testing.T) {
 	mockSecretsClient := new(mockSecretsManagerClient)
 	ctx := context.Background()
 
-	validSecret := PostgresSecret{
-		Username:     "user",
-		Password:     "pass",
-		Database:     "testdb",
-		Host:         "localhost",
-		Port:         "5432",
-		DBClusterARN: "arn:aws:rds:us-east-1:123456789012:cluster:test-cluster",
-		SecretARN:    "arn:aws:secretsmanager:us-east-1:123456789012:secret:test-secret",
-	}
-
-	validSecretJSON, _ := json.Marshal(validSecret)
-
 	tests := []struct {
 		name           string
 		envVars        map[string]string
-		mockSecret     *secretsmanager.GetSecretValueOutput
-		mockSecretErr  error
 		expectedErrMsg string
 	}{
 		{
 			name: "Successful Config Load",
 			envVars: map[string]string{
-				"POSTGRES_CONN_STR": "test-secret",
-				"ATPROTO_BASE_URL":  "https://example.com",
+				"ATPROTO_BASE_URL": "https://example.com",
 			},
-			mockSecret: &secretsmanager.GetSecretValueOutput{
-				SecretString: aws.String(string(validSecretJSON)),
-			},
-			mockSecretErr:  nil,
 			expectedErrMsg: "",
 		},
 		{
-			name: "Corrupt JSON in Secret",
-			envVars: map[string]string{
-				"POSTGRES_CONN_STR": "test-secret",
-				"ATPROTO_BASE_URL":  "https://example.com",
-			},
-			mockSecret: &secretsmanager.GetSecretValueOutput{
-				SecretString: aws.String(`{"invalid": "json"`),
-			},
-			mockSecretErr:  nil,
-			expectedErrMsg: "failed to parse PostgreSQL secret JSON",
-		},
-		{
-			name: "Missing Required Fields in Secret JSON",
-			envVars: map[string]string{
-				"POSTGRES_CONN_STR": "test-secret",
-				"ATPROTO_BASE_URL":  "https://example.com",
-			},
-			mockSecret: &secretsmanager.GetSecretValueOutput{
-				SecretString: aws.String(`{"username": "", "password": "", "database": "", "host": ""}`),
-			},
-			mockSecretErr:  nil,
-			expectedErrMsg: "parsed PostgreSQL secret is missing required fields",
+			name: "Missing ATPROTO_BASE_URL",
+			envVars: map[string]string{},
+			expectedErrMsg: "ATPROTO_BASE_URL environment variable is required",
 		},
 	}
 
@@ -95,8 +56,6 @@ func TestLoadConfig(t *testing.T) {
 			}
 
 			mockSecretsClient.ExpectedCalls = nil
-			mockSecretsClient.On("GetSecretValue", mock.Anything, mock.Anything).
-				Return(test.mockSecret, test.mockSecretErr)
 
 			_, _, err := LoadConfig(ctx, mockSecretsClient)
 
@@ -106,8 +65,6 @@ func TestLoadConfig(t *testing.T) {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), test.expectedErrMsg)
 			}
-
-			mockSecretsClient.AssertExpectations(t)
 		})
 	}
 }
